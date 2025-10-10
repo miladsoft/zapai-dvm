@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZapAI DVM</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+
+        h1 {
+            color: #f1f5f9;
+            font-size: 1.5em;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.875em;
+            background: #10b981;
+            color: white;
+        }
+
+        .status::before {
+            content: '●';
+            font-size: 1.2em;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            border: 1px solid #334155;
+        }
+
+        .card-title {
+            color: #94a3b8;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+
+        .card-value {
+            color: #f1f5f9;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            background: #1e293b;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        }
+
+        th {
+            background: #334155;
+            color: #94a3b8;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 12px;
+            border-top: 1px solid #334155;
+            font-size: 0.875em;
+        }
+
+        .relay-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .relay-status::before {
+            content: '●';
+            font-size: 1em;
+        }
+
+        .connected::before {
+            color: #10b981;
+        }
+
+        .disconnected::before {
+            color: #ef4444;
+        }
+
+        .relay-url {
+            color: #60a5fa;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+
+        .messages {
+            margin-top: 20px;
+        }
+
+        .message {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid #334155;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.875em;
+            color: #94a3b8;
+        }
+
+        .message-content {
+            color: #e2e8f0;
+            line-height: 1.5;
+        }
+
+        .bot-message {
+            border-left: 3px solid #10b981;
+        }
+
+        .user-message {
+            border-left: 3px solid #60a5fa;
+        }
+
+        .section-title {
+            color: #f1f5f9;
+            font-size: 1.125em;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ZapAI DVM</h1>
+            <p style="color: #94a3b8; font-size: 0.9em; margin-top: 8px;">Data Vending Machine for ZapAI Platform</p>
+            <span class="status" id="statusBadge">Running</span>
+        </header>
+
+        <div class="grid" id="stats">
+            <div class="card">
+                <div class="card-title">Uptime</div>
+                <div class="card-value" id="uptime">-</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Received</div>
+                <div class="card-value" id="messagesReceived">0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Sent</div>
+                <div class="card-value" id="messagesSent">0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Errors</div>
+                <div class="card-value" id="errors">0</div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <h2 class="section-title">Relays</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>URL</th>
+                        <th>Messages</th>
+                        <th>Errors</th>
+                    </tr>
+                </thead>
+                <tbody id="relaysTable">
+                    <tr>
+                        <td colspan="4" class="empty">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="messages">
+            <h2 class="section-title">Recent Messages</h2>
+            <div id="messagesList">
+                <div class="empty">No messages yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                document.getElementById('uptime').textContent = data.stats.uptimeFormatted;
+                document.getElementById('messagesReceived').textContent = data.stats.messagesReceived;
+                document.getElementById('messagesSent').textContent = data.stats.messagesSent;
+                document.getElementById('errors').textContent = data.stats.errors;
+                
+                updateRelaysTable(data.stats.relays);
+            } catch (error) {
+                console.error('Failed to fetch stats:', error);
+            }
+        }
+
+        function updateRelaysTable(relays) {
+            const tbody = document.getElementById('relaysTable');
+            if (!relays || relays.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="empty">No relays</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = relays.map(relay => `
+                <tr>
+                    <td>
+                        <span class="relay-status ${relay.connected ? 'connected' : 'disconnected'}">
+                            ${relay.connected ? 'Online' : 'Offline'}
+                        </span>
+                    </td>
+                    <td class="relay-url">${relay.url}</td>
+                    <td>${relay.messagesReceived} / ${relay.messagesSent}</td>
+                    <td>${relay.errors}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function fetchMessages() {
+            try {
+                const response = await fetch('/api/messages?limit=10');
+                const messages = await response.json();
+                
+                const messagesList = document.getElementById('messagesList');
+                
+                if (!messages || messages.length === 0) {
+                    messagesList.innerHTML = '<div class="empty">No messages yet</div>';
+                    return;
+                }
+                
+                messagesList.innerHTML = messages.map(msg => `
+                    <div class="message ${msg.role === 'bot' ? 'bot-message' : 'user-message'}">
+                        <div class="message-header">
+                            <span>${msg.role === 'bot' ? 'Bot' : 'User'}</span>
+                            <span>${new Date(msg.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div class="message-content">${msg.content}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to fetch messages:', error);
+            }
+        }
+
+        fetchStats();
+        fetchMessages();
+        setInterval(fetchStats, 5000);
+        setInterval(fetchMessages, 5000);
+    </script>
+</body>
+</html>
