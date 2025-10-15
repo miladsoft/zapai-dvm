@@ -3,9 +3,11 @@ import { nip19 } from 'nostr-tools';
 import { logger } from './logger.js';
 import { Database } from './database.js';
 import { GeminiAI } from './gemini.js';
+import { MessageQueue } from './queue.js';
+import { RateLimiter } from './ratelimiter.js';
 
 /**
- * Simple Nostr AI Bot using Nostrify
+ * Scalable Nostr AI Bot with queue system and rate limiting
  */
 export class NostrBot {
   constructor(config) {
@@ -14,17 +16,37 @@ export class NostrBot {
     this.signer = null;
     this.pubkey = null;
     this.processedEvents = new Set();
+    this.processedMessages = new Map(); // Track by pubkey+content to prevent duplicate responses
     this.controllers = [];
     this.db = new Database('./data/conversations');
     
     // Initialize Gemini AI
     this.gemini = new GeminiAI(config.geminiApiKey, config.botName);
     
+    // Initialize message queue
+    this.queue = new MessageQueue({
+      maxConcurrent: config.maxConcurrent || 10, // Process 10 messages simultaneously
+      maxQueueSize: config.maxQueueSize || 10000,
+      retryAttempts: 3,
+      retryDelay: 1000,
+      timeout: 45000, // 45 seconds per message
+    });
+    
+    // Initialize rate limiter
+    this.rateLimiter = new RateLimiter({
+      maxTokens: config.rateLimit?.maxTokens || 50, // 50 requests per user
+      refillRate: config.rateLimit?.refillRate || 5, // 5 tokens per second
+      windowMs: 60000, // 1 minute window
+    });
+    
     // Statistics
     this.stats = {
       startTime: Date.now(),
       messagesReceived: 0,
       messagesSent: 0,
+      messagesQueued: 0,
+      messagesDropped: 0,
+      rateLimited: 0,
       errors: 0,
     };
     
@@ -169,11 +191,12 @@ export class NostrBot {
   }
 
   /**
-   * Handle incoming event
+   * Handle incoming event with queue system and rate limiting
    */
   async handleEvent(event, relayUrl) {
-    // Skip if already processed
+    // Skip if already processed (by event ID)
     if (this.processedEvents.has(event.id)) {
+      logger.debug(`Duplicate event ${event.id} from ${relayUrl}, skipping`);
       return;
     }
     this.processedEvents.add(event.id);
@@ -202,6 +225,55 @@ export class NostrBot {
       relayStatus.connected = true;
     }
 
+    // Check rate limit
+    const rateLimitResult = await this.rateLimiter.checkLimit(event.pubkey);
+    if (!rateLimitResult.allowed) {
+      logger.warn(`Rate limit exceeded for ${event.pubkey.substring(0, 8)}...`);
+      this.stats.rateLimited++;
+      
+      // Send rate limit message
+      try {
+        const decryptedContent = await this.signer.nip04.decrypt(event.pubkey, event.content);
+        if (decryptedContent && decryptedContent.trim().length > 0) {
+          await this.sendMessage(
+            event.pubkey, 
+            rateLimitResult.reason + ` (Retry in ${rateLimitResult.retryAfter} seconds)`
+          );
+        }
+      } catch (error) {
+        logger.error('Failed to send rate limit message:', error);
+      }
+      return;
+    }
+
+    // Add to queue for processing
+    try {
+      this.stats.messagesQueued++;
+      await this.queue.enqueue(async () => {
+        await this.processMessage(event, relayUrl);
+      });
+    } catch (error) {
+      if (error.message === 'Queue is full') {
+        this.stats.messagesDropped++;
+        logger.error(`Queue full! Dropped message from ${event.pubkey.substring(0, 8)}...`);
+        
+        // Send queue full message
+        try {
+          await this.sendMessage(
+            event.pubkey, 
+            "I'm currently very busy processing many requests. Please try again in a few minutes."
+          );
+        } catch (sendError) {
+          logger.error('Failed to send queue full message:', sendError);
+        }
+      }
+    }
+  }
+
+  /**
+   * Process a message (called by queue)
+   */
+  async processMessage(event, relayUrl) {
     try {
       // Decrypt the message using NIP-04
       let decryptedContent;
@@ -218,7 +290,27 @@ export class NostrBot {
         return;
       }
 
-      logger.debug(`Decrypted message: ${decryptedContent}`);
+      // Create message fingerprint based on actual content
+      const messageFingerprint = `${event.pubkey}:${decryptedContent}`;
+      
+      // Check if we already processed this exact message content
+      if (this.processedMessages.has(messageFingerprint)) {
+        logger.debug(`Already processed this message content from ${event.pubkey.substring(0, 8)}..., skipping`);
+        return;
+      }
+      
+      // Mark as processed
+      this.processedMessages.set(messageFingerprint, Date.now());
+      
+      // Clean up old fingerprints (older than 5 minutes)
+      const now = Date.now();
+      for (const [key, timestamp] of this.processedMessages.entries()) {
+        if (now - timestamp > 300000) { // 5 minutes
+          this.processedMessages.delete(key);
+        }
+      }
+
+      logger.debug(`Processing: ${decryptedContent.substring(0, 50)}...`);
 
       // Save user message to database
       await this.db.saveMessage(event.pubkey, decryptedContent, false);
@@ -226,7 +318,7 @@ export class NostrBot {
       // Get conversation history from database
       const conversationHistory = await this.db.getConversation(event.pubkey);
 
-      // Generate AI response using Gemini
+      // Generate AI response using Gemini (with circuit breaker protection)
       const response = await this.gemini.generateResponse(decryptedContent, conversationHistory);
 
       // Add delay to seem more natural
@@ -238,9 +330,22 @@ export class NostrBot {
       // Save bot response to database
       await this.db.saveMessage(event.pubkey, response, true);
 
-      logger.info(`Sent response to ${event.pubkey.substring(0, 8)}...`);
+      logger.info(`✓ Response sent to ${event.pubkey.substring(0, 8)}...`);
     } catch (error) {
-      logger.error('Failed to handle event:', error);
+      logger.error('Failed to process message:', error);
+      this.stats.errors++;
+      
+      // Send error message to user
+      try {
+        await this.sendMessage(
+          event.pubkey, 
+          "I encountered an error processing your message. Please try again."
+        );
+      } catch (sendError) {
+        logger.error('Failed to send error message:', sendError);
+      }
+      
+      throw error; // Re-throw for queue retry logic
     }
   }
 
@@ -329,15 +434,21 @@ export class NostrBot {
   }
 
   /**
-   * Stop the bot
+   * Stop the bot gracefully
    */
   async stop() {
-    logger.info('Stopping bot...');
+    logger.info('Stopping bot gracefully...');
 
-    // Abort all subscriptions
+    // Stop accepting new messages
     for (const controller of this.controllers) {
       controller.abort();
     }
+
+    // Wait for queue to finish processing
+    await this.queue.stop();
+    
+    // Stop rate limiter
+    this.rateLimiter.stop();
 
     this.controllers = [];
     this.relays = [];
@@ -346,7 +457,7 @@ export class NostrBot {
   }
 
   /**
-   * Get bot statistics
+   * Get comprehensive bot statistics
    */
   getStats() {
     const uptime = Date.now() - (this.stats?.startTime || Date.now());
@@ -356,7 +467,13 @@ export class NostrBot {
       uptimeFormatted: this.formatUptime(uptime),
       messagesReceived: this.stats?.messagesReceived || 0,
       messagesSent: this.stats?.messagesSent || 0,
+      messagesQueued: this.stats?.messagesQueued || 0,
+      messagesDropped: this.stats?.messagesDropped || 0,
+      rateLimited: this.stats?.rateLimited || 0,
       errors: this.stats?.errors || 0,
+      queue: this.queue.getStats(),
+      rateLimiter: this.rateLimiter.getStats(),
+      gemini: this.gemini.getStats(),
       relays: Array.from(this.relayStatus?.values() || []),
     };
   }

@@ -17,13 +17,23 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-// Initialize bot
+// Initialize bot with scalability configurations
 const bot = new NostrBot({
   privateKey: process.env.BOT_PRIVATE_KEY,
   geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
   botName: process.env.BOT_NAME || 'ZapAI',
   relays: process.env.NOSTR_RELAYS.split(','),
   responseDelay: parseInt(process.env.BOT_RESPONSE_DELAY) || 2000,
+  
+  // Queue configuration
+  maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 10,
+  maxQueueSize: parseInt(process.env.MAX_QUEUE_SIZE) || 10000,
+  
+  // Rate limiting configuration
+  rateLimit: {
+    maxTokens: parseInt(process.env.RATE_LIMIT_MAX_TOKENS) || 50,
+    refillRate: parseInt(process.env.RATE_LIMIT_REFILL_RATE) || 5,
+  },
 });
 
 // Initialize web server

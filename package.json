@@ -7,8 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "chat": "node chat-test.js",
-    "chat:test": "node chat-test.js"
+    "chat": "node chat-test.js"
   },
   "keywords": [
     "nostr",

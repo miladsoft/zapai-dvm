@@ -16,8 +16,18 @@ npm install
 ### Configuration
 Create a `.env` file:
 ```env
+# Required
 BOT_PRIVATE_KEY=your_private_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key_here
 NOSTR_RELAYS=wss://relay.nostr.band,wss://relay.damus.io,wss://nos.lol
+
+# Optional - Scalability Settings
+MAX_CONCURRENT=10          # Process 10 messages simultaneously
+MAX_QUEUE_SIZE=10000       # Hold up to 10k messages in queue
+RATE_LIMIT_MAX_TOKENS=50   # 50 requests per user per minute
+RATE_LIMIT_REFILL_RATE=5   # 5 tokens refilled per second
+
 WEB_PORT=8080
 ```
 

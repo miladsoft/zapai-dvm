@@ -38,10 +38,32 @@ export class WebServer {
   setupRoutes() {
     // API Routes
     this.app.get('/api/status', (req, res) => {
+      const stats = this.bot.getStats();
       res.json({
         status: 'running',
         pubkey: this.bot.pubkey,
-        stats: this.bot.getStats(),
+        stats: {
+          ...stats,
+          performance: {
+            queueSize: stats.queue?.queueSize || 0,
+            processing: stats.queue?.processing || 0,
+            avgProcessTime: stats.queue?.avgProcessTime || 0,
+            successRate: stats.queue?.successRate || 'N/A',
+          },
+          rateLimiting: {
+            activeBuckets: stats.rateLimiter?.activeBuckets || 0,
+            globalTokens: stats.rateLimiter?.globalTokens || 0,
+            maxTokens: stats.rateLimiter?.maxTokens || 0,
+          },
+          geminiAI: {
+            requests: stats.gemini?.requests || 0,
+            successful: stats.gemini?.successful || 0,
+            failed: stats.gemini?.failed || 0,
+            fallbacks: stats.gemini?.fallbacks || 0,
+            successRate: stats.gemini?.successRate || 'N/A',
+            circuitBreakerState: stats.gemini?.circuitBreaker?.state || 'UNKNOWN',
+          },
+        },
       });
     });
 
@@ -85,9 +107,17 @@ export class WebServer {
       }
     });
 
-    // Health check
+    // Health check with detailed status
     this.app.get('/health', (req, res) => {
-      res.json({ status: 'ok' });
+      const stats = this.bot.getStats();
+      const isHealthy = stats.queue?.queueSize < 9000 && // Queue not near full
+                       stats.gemini?.circuitBreaker?.state !== 'OPEN'; // Circuit not open
+      
+      res.status(isHealthy ? 200 : 503).json({ 
+        status: isHealthy ? 'ok' : 'degraded',
+        queueSize: stats.queue?.queueSize || 0,
+        circuitBreaker: stats.gemini?.circuitBreaker?.state || 'UNKNOWN',
+      });
     });
 
     // Serve HTML
