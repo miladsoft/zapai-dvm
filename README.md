@@ -52,12 +52,27 @@ tail -f bot.log
 
 ## Features
 
-- 🚀 Lightweight and fast 
-- 🔄 Auto-reconnect to relays
-- 🔐 NIP-04 encryption for DMs
-- 📡 Multiple relay support
-- � Web dashboard for monitoring
-- 💾 LMDB database for message storage
+### Core Features
+- 🚀 **Production-grade scalability** - Handle thousands of users
+- 🤖 **Gemini AI Integration** - Powered by Google's latest AI (gemini-2.5-flash)
+- 🔄 **Auto-reconnect** to relays with exponential backoff
+- 🔐 **NIP-04 encryption** for private DMs
+- 📡 **Multiple relay support** with health monitoring (12 relays)
+- 💾 **LMDB database** for persistent conversation history
+- 🧠 **Conversation memory** - Bot remembers context (50 messages stored, 10 used)
+- 💬 **Dual mode messaging**:
+  - Encrypted DMs (kind 4) for private conversations
+  - Public replies (kind 1) for mentions and replies
+
+### Scalability Features
+- ⚡ **Message Queue** - Process 10 messages concurrently with 10k buffer
+- 🛡️ **Rate Limiting** - Per-user limits (50 req/min) with token bucket algorithm
+- � **Circuit Breaker** - Automatic fault tolerance and API protection
+- 📊 **Comprehensive Monitoring** - Real-time stats and health checks
+- ⏱️ **Timeout Protection** - Prevents hanging requests (45s timeout)
+- 🎯 **Graceful Degradation** - Friendly error messages when overloaded
+- ♻️ **Retry Logic** - 3 automatic retries with exponential backoff
+- 🔍 **Duplicate Prevention** - Smart deduplication by content fingerprint
 
 ## Web Dashboard
 
