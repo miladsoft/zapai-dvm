@@ -136,8 +136,8 @@ export class WebServer {
     return new Promise((resolve, reject) => {
       logger.info(`Attempting to start web server on port ${this.port}...`);
       
-      this.server = this.app.listen(this.port, '127.0.0.1', () => {
-        logger.info(`Web UI server started on http://localhost:${this.port}`);
+      this.server = this.app.listen(this.port, '0.0.0.0', () => {
+        logger.info(`Web UI server started on http://0.0.0.0:${this.port}`);
         resolve();
       });
       

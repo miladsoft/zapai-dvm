@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import 'websocket-polyfill';
-import dotenv from 'dotenv';
+import 'dotenv/config';
+import { WebSocket } from 'ws';
 import { NostrBot } from './bot.js';
 import { WebServer } from './webserver.js';
 import { logger } from './logger.js';
 
-dotenv.config();
+// Polyfill WebSocket for Node.js environment
+if (typeof global.WebSocket === 'undefined') {
+  global.WebSocket = WebSocket;
+}
 
 // Validate environment variables
 const requiredEnvVars = ['BOT_PRIVATE_KEY', 'GEMINI_API_KEY'];

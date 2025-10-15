@@ -8,9 +8,45 @@ A Data Vending Machine (DVM) is a specialized Nostr service that provides on-dem
 
 ## Quick Start
 
-### Installation
+### Option 1: Docker (Recommended) 🐳
+
+**Prerequisites:** Docker and Docker Compose installed
+
 ```bash
+# 1. Clone and configure
+git clone https://github.com/zapai-app/zapai-dvm.git
+cd zapai-dvm
+cp .env.example .env
+# Edit .env with your configuration
+
+# 2. Start with Docker Compose
+docker-compose up -d
+
+# 3. View logs
+docker-compose logs -f
+
+# 4. Access dashboard
+open http://localhost:3000
+```
+
+**See [DOCKER.md](./DOCKER.md) for complete Docker documentation.**
+
+### Option 2: Direct Installation
+
+**Prerequisites:** Node.js 18+ installed
+
+```bash
+# 1. Install dependencies
 npm install
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your configuration
+
+# 3. Start the bot
+npm start
+# or use the convenience script:
+./start.sh
 ```
 
 ### Configuration

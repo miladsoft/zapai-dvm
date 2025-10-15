@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  zapai-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zapai-dvm
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      - BOT_PRIVATE_KEY=${BOT_PRIVATE_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
+      - BOT_NAME=${BOT_NAME:-ZapAI}
+      - NOSTR_RELAYS=${NOSTR_RELAYS}
+      - BOT_RESPONSE_DELAY=${BOT_RESPONSE_DELAY:-2000}
+      - WEB_PORT=${WEB_PORT:-3000}
+      - MAX_CONCURRENT=${MAX_CONCURRENT:-10}
+      - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-10000}
+      - RATE_LIMIT_MAX_TOKENS=${RATE_LIMIT_MAX_TOKENS:-50}
+      - RATE_LIMIT_REFILL_RATE=${RATE_LIMIT_REFILL_RATE:-5}
+    
+    # Port mapping
+    ports:
+      - "${WEB_PORT:-3000}:${WEB_PORT:-3000}"
+    
+    # Volume for persistent data
+    volumes:
+      - ./data:/app/data
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    name: zapai-network
