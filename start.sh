@@ -18,7 +18,7 @@ for i in {1..10}; do
   sleep 0.5
 done
 
-echo "Starting ZapAI DVM (Data Vending Machine)..."
+echo "Starting ZapAI (Data Vending Machine)..."
 echo "Specialized DVM for ZapAI Platform"
 
 # Start the bot

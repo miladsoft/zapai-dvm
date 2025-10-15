@@ -2,6 +2,7 @@ import { NRelay1, NSecSigner } from '@nostrify/nostrify';
 import { nip19 } from 'nostr-tools';
 import { logger } from './logger.js';
 import { Database } from './database.js';
+import { GeminiAI } from './gemini.js';
 
 /**
  * Simple Nostr AI Bot using Nostrify
@@ -15,6 +16,9 @@ export class NostrBot {
     this.processedEvents = new Set();
     this.controllers = [];
     this.db = new Database('./data/conversations');
+    
+    // Initialize Gemini AI
+    this.gemini = new GeminiAI(config.geminiApiKey, config.botName);
     
     // Statistics
     this.stats = {
@@ -54,7 +58,7 @@ export class NostrBot {
    * Start the bot
    */
   async start() {
-    logger.info('Starting ZapAI DVM (Data Vending Machine) specialized for ZapAI platform...');
+    logger.info('Starting ZapAI (Data Vending Machine) specialized for ZapAI platform...');
 
     // Initialize database
     await this.db.init();
@@ -219,8 +223,11 @@ export class NostrBot {
       // Save user message to database
       await this.db.saveMessage(event.pubkey, decryptedContent, false);
 
-      // Fixed response for all messages
-      const response = "To get the answer, zap this note with at least 100 sats.";
+      // Get conversation history from database
+      const conversationHistory = await this.db.getConversation(event.pubkey);
+
+      // Generate AI response using Gemini
+      const response = await this.gemini.generateResponse(decryptedContent, conversationHistory);
 
       // Add delay to seem more natural
       await this.sleep(this.config.responseDelay);

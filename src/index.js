@@ -8,7 +8,7 @@ import { logger } from './logger.js';
 dotenv.config();
 
 // Validate environment variables
-const requiredEnvVars = ['BOT_PRIVATE_KEY'];
+const requiredEnvVars = ['BOT_PRIVATE_KEY', 'GEMINI_API_KEY'];
 const missing = requiredEnvVars.filter(v => !process.env[v]);
 
 if (missing.length > 0) {
@@ -20,6 +20,8 @@ if (missing.length > 0) {
 // Initialize bot
 const bot = new NostrBot({
   privateKey: process.env.BOT_PRIVATE_KEY,
+  geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  botName: process.env.BOT_NAME || 'ZapAI',
   relays: process.env.NOSTR_RELAYS.split(','),
   responseDelay: parseInt(process.env.BOT_RESPONSE_DELAY) || 2000,
 });

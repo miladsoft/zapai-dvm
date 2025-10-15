@@ -1,22 +1,22 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { google } from '@ai-sdk/google';
+import { generateText } from 'ai';
 import { logger } from './logger.js';
 
 /**
- * Gemini AI integration
+ * Gemini AI integration using AI SDK
  */
 export class GeminiAI {
-  constructor(apiKey, botName = 'ZapAI DVM') {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ 
-      model: 'gemini-2.0-flash',
-      generationConfig: {
-        temperature: 0.9,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      },
+  constructor(apiKey, botName = 'ZapAI') {
+    this.model = google('gemini-2.5-flash', {
+      apiKey,
     });
     this.botName = botName;
+    this.modelConfig = {
+      temperature: 0.9,
+      topK: 40,
+      topP: 0.95,
+      maxTokens: 1024,
+    };
   }
 
   /**
@@ -24,35 +24,50 @@ export class GeminiAI {
    */
   async generateResponse(message, conversationHistory = []) {
     try {
-      // Build context from conversation history
-      let context = `You are ${this.botName}, a helpful AI assistant on Nostr (a decentralized social network). `;
-      context += 'You communicate via encrypted direct messages. ';
-      context += 'Be friendly, concise, and helpful. ';
-      context += 'You can speak Persian (Farsi) and English fluently.\n\n';
+      // Build system instructions
+      let systemInstructions = `You are ${this.botName}, a helpful AI assistant on Nostr (a decentralized social network). `;
+      systemInstructions += 'You communicate via encrypted direct messages. ';
+      systemInstructions += 'Be friendly, concise, and helpful. ';
+      systemInstructions += 'You can speak English fluently. ';
+      systemInstructions += 'IMPORTANT: Always respond in plain text only. Do not use markdown formatting, code blocks, bold, italics, lists, or any special formatting. Just use simple, natural text.';
 
+      // Build messages array with conversation history
+      const messages = [];
+      
       if (conversationHistory.length > 0) {
-        context += 'Previous conversation:\n';
+        // Add up to last 10 messages from history
         conversationHistory.slice(-10).forEach((msg) => {
-          const role = msg.isFromBot ? 'Assistant' : 'User';
-          context += `${role}: ${msg.message}\n`;
+          messages.push({
+            role: msg.isFromBot ? 'assistant' : 'user',
+            content: msg.message,
+          });
         });
-        context += '\n';
       }
 
-      context += `User: ${message}\nAssistant:`;
+      // Add current message
+      messages.push({
+        role: 'user',
+        content: message,
+      });
 
-      const result = await this.model.generateContent(context);
-      const response = result.response;
-      const text = response.text();
+      const result = await generateText({
+        model: this.model,
+        system: systemInstructions,
+        messages: messages,
+        temperature: this.modelConfig.temperature,
+        topK: this.modelConfig.topK,
+        topP: this.modelConfig.topP,
+        maxTokens: this.modelConfig.maxTokens,
+      });
 
-      logger.debug('Gemini response:', text);
-      return text;
+      logger.debug('Gemini response:', result.text);
+      return result.text;
     } catch (error) {
       logger.error('Failed to generate Gemini response:', error);
       
       // Fallback responses
       const fallbacks = [
-         'Sorry, I cannot process your request right now. Please try again later.',
+        'Sorry, I cannot process your request right now. Please try again later.',
       ];
       
       return fallbacks[Math.floor(Math.random() * fallbacks.length)];
@@ -64,9 +79,11 @@ export class GeminiAI {
    */
   async test() {
     try {
-      const result = await this.model.generateContent('Hello! Please respond with "OK"');
-      const response = result.response.text();
-      logger.info('Gemini API test successful:', response);
+      const result = await generateText({
+        model: this.model,
+        prompt: 'Hello! Please respond with "OK"',
+      });
+      logger.info('Gemini API test successful:', result.text);
       return true;
     } catch (error) {
       logger.error('Gemini API test failed:', error);

@@ -1,4 +1,4 @@
-# ZapAI DVM
+# ZapAI
 
 ZapAI Data Vending Machine - A specialized DVM (Data Vending Machine) built exclusively for the ZapAI platform. This DVM provides AI-powered responses using Gemini integration over the Nostr protocol.
 
