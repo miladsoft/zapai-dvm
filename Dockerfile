@@ -27,10 +27,9 @@ COPY . .
 
 # Create data directory for LMDB
 RUN mkdir -p /app/data/conversations && \
-    chown -R node:node /app
+    chown -R 1000:1000 /app
 
-# Switch to non-root user
-USER node
+# Note: User is set in docker-compose.yml to match host user
 
 # Expose web dashboard port
 EXPOSE 3000

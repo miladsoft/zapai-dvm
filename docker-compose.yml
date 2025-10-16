@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: zapai-dvm
     restart: unless-stopped
+    user: "1000:1000"
     
     # Environment variables
     environment:
