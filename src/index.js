@@ -4,6 +4,10 @@ import { WebSocket } from 'ws';
 import { NostrBot } from './bot.js';
 import { WebServer } from './webserver.js';
 import { logger } from './logger.js';
+import { EventEmitter } from 'events';
+
+// Increase max listeners to prevent warnings
+EventEmitter.defaultMaxListeners = 50;
 
 // Polyfill WebSocket for Node.js environment
 if (typeof global.WebSocket === 'undefined') {
@@ -31,6 +35,7 @@ const bot = new NostrBot({
   // Queue configuration
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 10,
   maxQueueSize: parseInt(process.env.MAX_QUEUE_SIZE) || 10000,
+  queueTimeout: parseInt(process.env.QUEUE_TIMEOUT) || 60000, // 60 seconds default
   
   // Rate limiting configuration
   rateLimit: {

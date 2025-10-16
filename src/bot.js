@@ -29,7 +29,7 @@ export class NostrBot {
       maxQueueSize: config.maxQueueSize || 10000,
       retryAttempts: 3,
       retryDelay: 1000,
-      timeout: 45000, // 45 seconds per message
+      timeout: config.queueTimeout || 60000, // 60 seconds per message
     });
     
     // Initialize rate limiter
@@ -52,6 +52,11 @@ export class NostrBot {
     
     // Relay status tracking
     this.relayStatus = new Map();
+    
+    // Track failed relay connections
+    this.failedRelays = new Set();
+    this.maxReconnectAttempts = 5; // Maximum reconnection attempts per relay
+    this.reconnectAttempts = new Map(); // Track attempts per relay
   }
 
   /**
@@ -161,13 +166,27 @@ export class NostrBot {
    * Listen to a relay for incoming messages
    */
   async listenToRelay(relay, relayUrl, filters, signal) {
+    // Initialize reconnect attempts counter
+    if (!this.reconnectAttempts.has(relayUrl)) {
+      this.reconnectAttempts.set(relayUrl, 0);
+    }
+    
     while (!signal.aborted) {
+      // Check if relay has failed too many times
+      if (this.failedRelays.has(relayUrl)) {
+        logger.warn(`Relay ${relayUrl} is marked as failed, skipping...`);
+        break;
+      }
+      
       try {
         logger.debug(`Starting subscription to ${relayUrl}`);
         
         for await (const msg of relay.req(filters, { signal })) {
           if (msg[0] === 'EVENT') {
             const event = msg[2];
+            // Reset reconnect attempts on successful message
+            this.reconnectAttempts.set(relayUrl, 0);
+            
             // Handle event without blocking the loop
             this.handleEvent(event, relayUrl).catch(error => {
               logger.error(`Error handling event from ${relayUrl}:`, error);
@@ -182,20 +201,42 @@ export class NostrBot {
         
         // If we exit the loop and not aborted, wait before reconnecting
         if (!signal.aborted) {
-          logger.info(`Reconnecting to ${relayUrl} in 5 seconds...`);
-          await this.sleep(5000);
+          const attempts = this.reconnectAttempts.get(relayUrl) || 0;
+          
+          if (attempts >= this.maxReconnectAttempts) {
+            logger.error(`Relay ${relayUrl} failed ${attempts} times, marking as permanently failed`);
+            this.failedRelays.add(relayUrl);
+            this.relayStatus.get(relayUrl).connected = false;
+            break;
+          }
+          
+          this.reconnectAttempts.set(relayUrl, attempts + 1);
+          const delay = Math.min(5000 * Math.pow(2, attempts), 60000); // Exponential backoff, max 60s
+          logger.info(`Reconnecting to ${relayUrl} in ${delay/1000} seconds... (attempt ${attempts + 1}/${this.maxReconnectAttempts})`);
+          await this.sleep(delay);
         }
       } catch (error) {
         if (error.name === 'AbortError') {
           logger.debug(`Subscription to ${relayUrl} aborted`);
           break;
         }
-        logger.error(`Relay ${relayUrl} error:`, error);
+        logger.error(`Relay ${relayUrl} error:`, error.message);
+        
+        const attempts = this.reconnectAttempts.get(relayUrl) || 0;
+        
+        if (attempts >= this.maxReconnectAttempts) {
+          logger.error(`Relay ${relayUrl} failed ${attempts} times, marking as permanently failed`);
+          this.failedRelays.add(relayUrl);
+          this.relayStatus.get(relayUrl).connected = false;
+          break;
+        }
         
         // Wait before reconnecting
         if (!signal.aborted) {
-          logger.info(`Reconnecting to ${relayUrl} in 5 seconds...`);
-          await this.sleep(5000);
+          this.reconnectAttempts.set(relayUrl, attempts + 1);
+          const delay = Math.min(5000 * Math.pow(2, attempts), 60000); // Exponential backoff
+          logger.info(`Reconnecting to ${relayUrl} in ${delay/1000} seconds... (attempt ${attempts + 1}/${this.maxReconnectAttempts})`);
+          await this.sleep(delay);
         }
       }
     }
