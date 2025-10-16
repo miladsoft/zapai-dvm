@@ -34,9 +34,16 @@ export class Database {
 
   /**
    * Save a conversation message
+   * @param {string} pubkey - User's public key
+   * @param {string} message - Message content
+   * @param {boolean} isFromBot - Whether message is from bot
+   * @param {object} metadata - Additional metadata (eventId, messageType, replyTo)
    */
-  async saveMessage(pubkey, message, isFromBot = false) {
+  async saveMessage(pubkey, message, isFromBot = false, metadata = {}) {
     try {
+      const timestamp = Date.now();
+      const messageId = metadata.eventId || `${pubkey}:${timestamp}`;
+      
       // Create a hash to check for duplicates
       const messageHash = `${pubkey}:${message}:${isFromBot}`;
       const hashKey = `hash:${messageHash}`;
@@ -48,19 +55,24 @@ export class Database {
         return false;
       }
       
-      // Save the message
-      const key = `${pubkey}:${Date.now()}:${isFromBot ? 'bot' : 'user'}`;
+      // Save the message with metadata
+      const key = `${pubkey}:${timestamp}:${isFromBot ? 'bot' : 'user'}`;
       await this.db.put(key, {
         pubkey,
         message,
         isFromBot,
-        timestamp: Date.now(),
+        timestamp,
+        messageId,
+        messageType: metadata.messageType || (isFromBot ? 'response' : 'question'),
+        replyTo: metadata.replyTo || null, // ID of the message this is replying to
+        eventId: metadata.eventId || null, // Nostr event ID
+        eventKind: metadata.eventKind || null, // Nostr event kind (1=public, 4=DM)
       });
       
       // Save the hash to prevent duplicates
-      await this.db.put(hashKey, { timestamp: Date.now() });
+      await this.db.put(hashKey, { timestamp });
       
-      return true;
+      return messageId;
     } catch (error) {
       logger.error('Failed to save message:', error);
       return false;
@@ -151,6 +163,11 @@ export class ConversationDatabase extends Database {
           timestamp: value.timestamp,
           pubkey: value.pubkey,
           sender: value.pubkey, // Add sender field for dashboard
+          messageId: value.messageId || null,
+          messageType: value.messageType || (value.isFromBot ? 'response' : 'question'),
+          replyTo: value.replyTo || null,
+          eventId: value.eventId || null,
+          eventKind: value.eventKind || null,
         });
         
         // Stop when we reach the limit

@@ -376,8 +376,17 @@ export class NostrBot {
 
       logger.debug(`Processing: ${messageContent.substring(0, 50)}...`);
 
-      // Save user message to database
-      await this.db.saveMessage(event.pubkey, messageContent, false);
+      // Save user message to database with metadata
+      const userMessageId = await this.db.saveMessage(
+        event.pubkey, 
+        messageContent, 
+        false,
+        {
+          eventId: event.id,
+          eventKind: event.kind,
+          messageType: 'question'
+        }
+      );
 
       // Get conversation history from database
       const conversationHistory = await this.db.getConversation(event.pubkey);
@@ -389,16 +398,29 @@ export class NostrBot {
       await this.sleep(this.config.responseDelay);
 
       // Send response based on event kind
+      let responseEventId = null;
       if (event.kind === 4) {
         // Reply with encrypted DM
-        await this.sendDM(event.pubkey, response);
+        const dmEvent = await this.sendDM(event.pubkey, response);
+        responseEventId = dmEvent?.id;
       } else if (event.kind === 1) {
         // Reply with public post
-        await this.sendReply(event, response);
+        const replyEvent = await this.sendReply(event, response);
+        responseEventId = replyEvent?.id;
       }
 
-      // Save bot response to database
-      await this.db.saveMessage(event.pubkey, response, true);
+      // Save bot response to database with metadata linking to user message
+      await this.db.saveMessage(
+        event.pubkey, 
+        response, 
+        true,
+        {
+          eventId: responseEventId,
+          eventKind: event.kind,
+          messageType: 'response',
+          replyTo: userMessageId // Link to the user's question
+        }
+      );
 
       const replyType = event.kind === 4 ? 'DM' : 'public reply';
       logger.info(`✓ ${replyType} sent to ${event.pubkey.substring(0, 8)}...`);
@@ -493,6 +515,8 @@ export class NostrBot {
       if (successCount === 0) {
         logger.error('Failed to publish DM to any relay!');
       }
+      
+      return signedEvent; // Return the event for database storage
     } catch (error) {
       logger.error('Failed to send DM:', error);
       throw error;
@@ -564,6 +588,8 @@ export class NostrBot {
       if (successCount === 0) {
         logger.error('Failed to publish reply to any relay!');
       }
+      
+      return signedEvent; // Return the event for database storage
     } catch (error) {
       logger.error('Failed to send reply:', error);
       throw error;

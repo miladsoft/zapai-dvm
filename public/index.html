@@ -279,6 +279,123 @@
             color: white;
         }
 
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-top: 20px;
+            padding: 16px;
+        }
+
+        .pagination.hidden {
+            display: none;
+        }
+
+        .pagination-btn {
+            padding: 10px 20px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            color: var(--accent-blue);
+            border-radius: 8px;
+            font-size: 0.875em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 120px;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: var(--accent-blue);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            border-color: var(--text-muted);
+            color: var(--text-muted);
+        }
+
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.875em;
+            font-weight: 500;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        .filters-container {
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .search-box {
+            margin-bottom: 12px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.95em;
+            transition: all 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            border-radius: 8px;
+            font-size: 0.875em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        .filter-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .filter-info {
+            color: var(--text-muted);
+            font-size: 0.8em;
+            text-align: center;
+            min-height: 18px;
+        }
+
         .messages-container {
             max-height: 600px;
             overflow-y: auto;
@@ -314,11 +431,11 @@
         }
 
         .message-item.user-message {
-            border-left: 4px solid var(--accent-blue);
+            background: rgba(59, 130, 246, 0.03);
         }
 
         .message-item.bot-message {
-            border-left: 4px solid var(--accent-green);
+            background: rgba(16, 185, 129, 0.03);
         }
 
         .message-header {
@@ -371,6 +488,17 @@
             word-wrap: break-word;
         }
 
+        .reply-to {
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--accent-purple);
+            padding: 8px 12px;
+            margin-bottom: 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
         .message-meta {
             display: flex;
             gap: 16px;
@@ -379,6 +507,12 @@
             border-top: 1px solid var(--border-color);
             font-size: 0.75em;
             color: var(--text-muted);
+        }
+
+        .message-meta span {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
 
         .empty-state {
@@ -515,8 +649,26 @@
                     <h2 class="section-title">Recent Messages</h2>
                     <button class="refresh-btn" onclick="loadMessages()">🔄 Refresh</button>
                 </div>
+                
+                <div class="filters-container">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search messages..." onkeyup="applyFilters()">
+                    </div>
+                    <div class="filter-buttons">
+                        <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+                        <button class="filter-btn" data-filter="user" onclick="setFilter('user')">User</button>
+                        <button class="filter-btn" data-filter="bot" onclick="setFilter('bot')">Bot</button>
+                    </div>
+                    <div class="filter-info" id="filterInfo"></div>
+                </div>
+                
                 <div id="messagesContainer" class="messages-container">
                     <div class="loading"><div class="spinner"></div>Loading...</div>
+                </div>
+                <div class="pagination hidden" id="pagination">
+                    <button class="pagination-btn" id="prevBtn" onclick="changePage(-1)">← Previous</button>
+                    <span class="pagination-info" id="pageInfo">Page 1 of 1</span>
+                    <button class="pagination-btn" id="nextBtn" onclick="changePage(1)">Next →</button>
                 </div>
             </div>
 
@@ -605,69 +757,209 @@
                 const res = await fetch('/api/status', {credentials: 'include'});
                 const data = await res.json();
                 
-                const uptime = Math.floor((Date.now() - data.stats.startTime) / 1000);
-                const hours = Math.floor(uptime / 3600);
-                const minutes = Math.floor((uptime % 3600) / 60);
-                document.getElementById('uptime').textContent = hours + 'h ' + minutes + 'm';
+                // Use the uptime value from API (in seconds) or formatted version
+                if (data.stats.uptimeFormatted) {
+                    document.getElementById('uptime').textContent = data.stats.uptimeFormatted;
+                } else if (data.stats.uptime) {
+                    const uptime = data.stats.uptime;
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    document.getElementById('uptime').textContent = hours + 'h ' + minutes + 'm';
+                } else {
+                    document.getElementById('uptime').textContent = '-';
+                }
                 
                 document.getElementById('messagesReceived').textContent = data.stats.messagesReceived || 0;
                 document.getElementById('messagesSent').textContent = data.stats.messagesSent || 0;
                 document.getElementById('queueSize').textContent = data.stats.performance?.queueSize || 0;
-                document.getElementById('successRate').textContent = data.stats.performance?.successRate || 'N/A';
+                
+                // Display success rate with better handling
+                const successRate = data.stats.performance?.successRate;
+                if (successRate && successRate !== 'N/A') {
+                    document.getElementById('successRate').textContent = successRate;
+                } else if (data.stats.queue?.processed === 0 && data.stats.queue?.failed === 0) {
+                    // No messages processed yet
+                    document.getElementById('successRate').textContent = '100%';
+                } else {
+                    document.getElementById('successRate').textContent = 'N/A';
+                }
             } catch (e) {
                 console.error('Failed to load stats:', e);
             }
         }
+
+        // Pagination and filter variables
+        let allMessages = [];
+        let filteredMessages = [];
+        let currentPage = 1;
+        let currentFilter = 'all';
+        const messagesPerPage = 10;
 
         async function loadMessages() {
             const container = document.getElementById('messagesContainer');
             
             try {
                 const res = await fetch('/api/messages?limit=100', {credentials: 'include'});
-                const messages = await res.json();
+                allMessages = await res.json();
                 
-                if (messages.length === 0) {
+                if (allMessages.length === 0) {
                     container.innerHTML = '<div class="empty-state">💬 No messages yet</div>';
+                    document.getElementById('pagination').classList.add('hidden');
                     return;
                 }
                 
-                messages.sort((a, b) => b.timestamp - a.timestamp);
-                
-                container.innerHTML = messages.map(msg => {
-                    const isBot = msg.role === 'bot' || msg.role === 'assistant';
-                    const date = new Date(msg.timestamp);
-                    const formattedDate = date.toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                    });
-                    
-                    const senderShort = msg.sender ? 
-                        msg.sender.substring(0, 8) + '...' + msg.sender.substring(msg.sender.length - 8) : 
-                        'Unknown';
-                    
-                    return `
-                        <div class="message-item ${isBot ? 'bot-message' : 'user-message'}">
-                            <div class="message-header">
-                                <div class="message-sender">
-                                    <span class="sender-badge ${isBot ? 'bot' : 'user'}">${isBot ? 'BOT' : 'USER'}</span>
-                                    <span class="sender-pubkey" title="${msg.sender || 'N/A'}">${senderShort}</span>
-                                </div>
-                                <div class="message-time">${formattedDate}</div>
-                            </div>
-                            <div class="message-content">${escapeHtml(msg.content)}</div>
-                            <div class="message-meta">
-                                <span>📝 ${msg.role}</span>
-                                ${msg.relay ? '<span>🔗 ' + msg.relay + '</span>' : ''}
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                allMessages.sort((a, b) => b.timestamp - a.timestamp);
+                currentPage = 1;
+                applyFilters();
             } catch (e) {
                 container.innerHTML = '<div class="empty-state">⚠️ Failed to load messages</div>';
+                document.getElementById('pagination').classList.add('hidden');
+            }
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            currentPage = 1;
+            
+            // Update active button
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.filter === filter) {
+                    btn.classList.add('active');
+                }
+            });
+            
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+            
+            // Apply role filter
+            filteredMessages = allMessages.filter(msg => {
+                const isBot = msg.role === 'bot' || msg.role === 'assistant';
+                
+                if (currentFilter === 'user' && isBot) return false;
+                if (currentFilter === 'bot' && !isBot) return false;
+                
+                return true;
+            });
+            
+            // Apply search filter
+            if (searchTerm) {
+                filteredMessages = filteredMessages.filter(msg => {
+                    const content = msg.content.toLowerCase();
+                    const sender = (msg.sender || '').toLowerCase();
+                    const role = msg.role.toLowerCase();
+                    
+                    return content.includes(searchTerm) || 
+                           sender.includes(searchTerm) || 
+                           role.includes(searchTerm);
+                });
+            }
+            
+            // Update filter info
+            const filterInfo = document.getElementById('filterInfo');
+            if (searchTerm || currentFilter !== 'all') {
+                filterInfo.textContent = `Showing ${filteredMessages.length} of ${allMessages.length} messages`;
+            } else {
+                filterInfo.textContent = '';
+            }
+            
+            // Reset to first page when filter changes
+            if (currentPage > Math.ceil(filteredMessages.length / messagesPerPage)) {
+                currentPage = 1;
+            }
+            
+            displayMessages();
+        }
+
+        function displayMessages() {
+            const container = document.getElementById('messagesContainer');
+            const totalPages = Math.ceil(filteredMessages.length / messagesPerPage);
+            const start = (currentPage - 1) * messagesPerPage;
+            const end = start + messagesPerPage;
+            const pageMsgs = filteredMessages.slice(start, end);
+            
+            if (filteredMessages.length === 0) {
+                container.innerHTML = '<div class="empty-state">💬 No messages match your filters</div>';
+                document.getElementById('pagination').classList.add('hidden');
+                return;
+            }
+            
+            if (pageMsgs.length === 0) {
+                container.innerHTML = '<div class="empty-state">💬 No messages on this page</div>';
+                return;
+            }
+            
+            container.innerHTML = pageMsgs.map(msg => {
+                const isBot = msg.role === 'bot' || msg.role === 'assistant';
+                const date = new Date(msg.timestamp);
+                const formattedDate = date.toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                
+                const senderShort = msg.sender ? 
+                    msg.sender.substring(0, 8) + '...' + msg.sender.substring(msg.sender.length - 8) : 
+                    'Unknown';
+                
+                // Find the question this response is replying to
+                let replyToContent = '';
+                if (msg.replyTo && isBot) {
+                    const replyToMsg = filteredMessages.find(m => m.messageId === msg.replyTo);
+                    if (replyToMsg) {
+                        const shortContent = replyToMsg.content.length > 50 
+                            ? replyToMsg.content.substring(0, 50) + '...' 
+                            : replyToMsg.content;
+                        replyToContent = `<div class="reply-to">↩️ Replying to: "${escapeHtml(shortContent)}"</div>`;
+                    }
+                }
+                
+                return `
+                    <div class="message-item ${isBot ? 'bot-message' : 'user-message'}">
+                        <div class="message-header">
+                            <div class="message-sender">
+                                <span class="sender-badge ${isBot ? 'bot' : 'user'}">${isBot ? 'BOT' : 'USER'}</span>
+                                <span class="sender-pubkey" title="${msg.sender || 'N/A'}">${senderShort}</span>
+                            </div>
+                            <div class="message-time">${formattedDate}</div>
+                        </div>
+                        ${replyToContent}
+                        <div class="message-content">${escapeHtml(msg.content)}</div>
+                        <div class="message-meta">
+                            <span>📝 ${msg.messageType || msg.role}</span>
+                            ${msg.eventKind ? '<span>� ' + (msg.eventKind === 4 ? 'DM' : 'Public') + '</span>' : ''}
+                            ${msg.eventId ? '<span title="' + msg.eventId + '">🆔 ' + msg.eventId.substring(0, 8) + '...</span>' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Update pagination UI
+            if (totalPages > 1) {
+                document.getElementById('pagination').classList.remove('hidden');
+                document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages} (${filteredMessages.length} filtered)`;
+                document.getElementById('prevBtn').disabled = currentPage === 1;
+                document.getElementById('nextBtn').disabled = currentPage === totalPages;
+            } else {
+                document.getElementById('pagination').classList.add('hidden');
+            }
+        }
+
+        function changePage(delta) {
+            const totalPages = Math.ceil(filteredMessages.length / messagesPerPage);
+            const newPage = currentPage + delta;
+            
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                displayMessages();
+                // Scroll to top of messages
+                document.getElementById('messagesContainer').scrollTop = 0;
             }
         }
 
