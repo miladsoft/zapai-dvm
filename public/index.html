@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZapAI</title>
+    <title>ZapAI Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -11,296 +11,721 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-green: #10b981;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-red: #ef4444;
+            --border-color: #334155;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .login-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
             padding: 20px;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+        .login-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
         }
 
-        header {
-            background: #1e293b;
-            border-radius: 8px;
-            padding: 20px;
+        .login-title {
+            font-size: 2em;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .login-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .form-group {
             margin-bottom: 20px;
-            border: 1px solid #334155;
         }
 
-        h1 {
-            color: #f1f5f9;
-            font-size: 1.5em;
-            font-weight: 600;
+        .form-label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.875em;
+            font-weight: 500;
             margin-bottom: 8px;
         }
 
-        .status {
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1em;
+            transition: all 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.875em;
+            display: none;
+        }
+
+        .dashboard {
+            display: none;
+        }
+
+        .dashboard.active {
+            display: block;
+        }
+
+        .topbar {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .topbar-title {
+            font-size: 1.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .topbar-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .status-badge {
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 4px 12px;
-            border-radius: 4px;
+            padding: 6px 12px;
+            border-radius: 20px;
             font-size: 0.875em;
-            background: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn-logout {
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            border-radius: 8px;
+            font-size: 0.875em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-logout:hover {
+            background: var(--accent-red);
             color: white;
         }
 
-        .status::before {
-            content: '●';
-            font-size: 1.2em;
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
         }
 
-        .grid {
+        .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
+            gap: 16px;
+            margin-bottom: 24px;
         }
 
-        .card {
-            background: #1e293b;
-            border-radius: 8px;
-            padding: 15px;
-            border: 1px solid #334155;
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s;
         }
 
-        .card-title {
-            color: #94a3b8;
+        .stat-card:hover {
+            transform: translateY(-4px);
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
             font-size: 0.75em;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            font-weight: 600;
             margin-bottom: 8px;
         }
 
-        .card-value {
-            color: #f1f5f9;
-            font-size: 1.5em;
-            font-weight: 600;
+        .stat-value {
+            color: var(--text-primary);
+            font-size: 2em;
+            font-weight: 700;
         }
 
-        table {
-            width: 100%;
-            background: #1e293b;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #334155;
+        .section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
         }
 
-        th {
-            background: #334155;
-            color: #94a3b8;
-            font-size: 0.75em;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-        }
-
-        td {
-            padding: 12px;
-            border-top: 1px solid #334155;
-            font-size: 0.875em;
-        }
-
-        .relay-status {
-            display: inline-flex;
+        .section-header {
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 6px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
         }
 
-        .relay-status::before {
-            content: '●';
-            font-size: 1em;
+        .section-title {
+            font-size: 1.25em;
+            font-weight: 600;
         }
 
-        .connected::before {
-            color: #10b981;
-        }
-
-        .disconnected::before {
-            color: #ef4444;
-        }
-
-        .relay-url {
-            color: #60a5fa;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85em;
-        }
-
-        .messages {
-            margin-top: 20px;
-        }
-
-        .message {
-            background: #1e293b;
+        .refresh-btn {
+            padding: 8px 16px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            color: var(--accent-blue);
             border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            border: 1px solid #334155;
+            font-size: 0.875em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .messages-container {
+            max-height: 600px;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .messages-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .messages-container::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb {
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+        }
+
+        .message-item {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.2s;
+        }
+
+        .message-item:hover {
+            border-color: var(--accent-blue);
+            transform: translateX(4px);
+        }
+
+        .message-item.user-message {
+            border-left: 4px solid var(--accent-blue);
+        }
+
+        .message-item.bot-message {
+            border-left: 4px solid var(--accent-green);
         }
 
         .message-header {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .message-sender {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sender-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .sender-badge.user {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent-blue);
+        }
+
+        .sender-badge.bot {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+
+        .sender-pubkey {
+            font-family: 'Courier New', monospace;
             font-size: 0.875em;
-            color: #94a3b8;
+            color: var(--text-secondary);
+        }
+
+        .message-time {
+            color: var(--text-muted);
+            font-size: 0.875em;
         }
 
         .message-content {
-            color: #e2e8f0;
-            line-height: 1.5;
+            color: var(--text-primary);
+            line-height: 1.6;
+            word-wrap: break-word;
         }
 
-        .bot-message {
-            border-left: 3px solid #10b981;
+        .message-meta {
+            display: flex;
+            gap: 16px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.75em;
+            color: var(--text-muted);
         }
 
-        .user-message {
-            border-left: 3px solid #60a5fa;
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
         }
 
-        .section-title {
-            color: #f1f5f9;
-            font-size: 1.125em;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-
-        .empty {
+        .loading {
             text-align: center;
             padding: 40px;
-            color: #64748b;
+        }
+
+        .spinner {
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--accent-blue);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .relay-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .relay-table th {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            font-size: 0.75em;
+            text-transform: uppercase;
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .relay-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875em;
+        }
+
+        .relay-table tr:hover {
+            background: var(--bg-primary);
+        }
+
+        .relay-status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .relay-status-dot.connected {
+            background: var(--accent-green);
+        }
+
+        .relay-status-dot.disconnected {
+            background: var(--accent-red);
+        }
+
+        .relay-url {
+            font-family: 'Courier New', monospace;
+            color: var(--accent-blue);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>ZapAI</h1>
-            <p style="color: #94a3b8; font-size: 0.9em; margin-top: 8px;">Data Vending Machine for ZapAI Platform</p>
-            <span class="status" id="statusBadge">Running</span>
-        </header>
+    <div id="loginPage" class="login-container">
+        <div class="login-box">
+            <h1 class="login-title">ZapAI Dashboard</h1>
+            <p class="login-subtitle">Enter password to access dashboard</p>
+            <div id="loginError" class="error-message"></div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="Enter password" required>
+                </div>
+                <button type="submit" class="btn">Login</button>
+            </form>
+        </div>
+    </div>
 
-        <div class="grid" id="stats">
-            <div class="card">
-                <div class="card-title">Uptime</div>
-                <div class="card-value" id="uptime">-</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Received</div>
-                <div class="card-value" id="messagesReceived">0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Sent</div>
-                <div class="card-value" id="messagesSent">0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Errors</div>
-                <div class="card-value" id="errors">0</div>
+    <div id="dashboardPage" class="dashboard">
+        <div class="topbar">
+            <div class="topbar-title">ZapAI Dashboard</div>
+            <div class="topbar-actions">
+                <div class="status-badge">
+                    <span class="status-dot"></span>
+                    <span>Online</span>
+                </div>
+                <button class="btn-logout" onclick="logout()">Logout</button>
             </div>
         </div>
 
-        <div style="margin-bottom: 20px;">
-            <h2 class="section-title">Relays</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Status</th>
-                        <th>URL</th>
-                        <th>Messages</th>
-                        <th>Errors</th>
-                    </tr>
-                </thead>
-                <tbody id="relaysTable">
-                    <tr>
-                        <td colspan="4" class="empty">Loading...</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Uptime</div>
+                    <div class="stat-value" id="uptime">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Messages Received</div>
+                    <div class="stat-value" id="messagesReceived">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Messages Sent</div>
+                    <div class="stat-value" id="messagesSent">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Queue Size</div>
+                    <div class="stat-value" id="queueSize">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Relays</div>
+                    <div class="stat-value" id="activeRelays">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-value" id="successRate">N/A</div>
+                </div>
+            </div>
 
-        <div class="messages">
-            <h2 class="section-title">Recent Messages</h2>
-            <div id="messagesList">
-                <div class="empty">No messages yet</div>
+            <div class="section">
+                <div class="section-header">
+                    <h2 class="section-title">Recent Messages</h2>
+                    <button class="refresh-btn" onclick="loadMessages()">🔄 Refresh</button>
+                </div>
+                <div id="messagesContainer" class="messages-container">
+                    <div class="loading"><div class="spinner"></div>Loading...</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <h2 class="section-title">Relay Status</h2>
+                    <button class="refresh-btn" onclick="loadRelays()">🔄 Refresh</button>
+                </div>
+                <div id="relaysContainer">
+                    <div class="loading"><div class="spinner"></div>Loading...</div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        async function fetchStats() {
+        async function checkAuth() {
             try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                
-                document.getElementById('uptime').textContent = data.stats.uptimeFormatted;
-                document.getElementById('messagesReceived').textContent = data.stats.messagesReceived;
-                document.getElementById('messagesSent').textContent = data.stats.messagesSent;
-                document.getElementById('errors').textContent = data.stats.errors;
-                
-                updateRelaysTable(data.stats.relays);
-            } catch (error) {
-                console.error('Failed to fetch stats:', error);
+                const res = await fetch('/api/auth/check', {credentials: 'include'});
+                const data = await res.json();
+                if (!data.requiresAuth || data.authenticated) {
+                    showDashboard();
+                } else {
+                    showLogin();
+                }
+            } catch (e) {
+                showLogin();
             }
         }
 
-        function updateRelaysTable(relays) {
-            const tbody = document.getElementById('relaysTable');
-            if (!relays || relays.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="empty">No relays</td></tr>';
-                return;
-            }
+        function showLogin() {
+            document.getElementById('loginPage').style.display = 'flex';
+            document.getElementById('dashboardPage').classList.remove('active');
+        }
+
+        function showDashboard() {
+            document.getElementById('loginPage').style.display = 'none';
+            document.getElementById('dashboardPage').classList.add('active');
+            loadDashboardData();
+            setInterval(() => {
+                loadStats();
+                loadMessages();
+                loadRelays();
+            }, 10000);
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('loginError');
             
-            tbody.innerHTML = relays.map(relay => `
-                <tr>
-                    <td>
-                        <span class="relay-status ${relay.connected ? 'connected' : 'disconnected'}">
-                            ${relay.connected ? 'Online' : 'Offline'}
-                        </span>
-                    </td>
-                    <td class="relay-url">${relay.url}</td>
-                    <td>${relay.messagesReceived} / ${relay.messagesSent}</td>
-                    <td>${relay.errors}</td>
-                </tr>
-            `).join('');
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    credentials: 'include',
+                    body: JSON.stringify({password})
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showDashboard();
+                } else {
+                    errorDiv.textContent = data.message || 'Invalid password';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (e) {
+                errorDiv.textContent = 'Login failed';
+                errorDiv.style.display = 'block';
+            }
+        });
+
+        async function logout() {
+            await fetch('/api/logout', {method: 'POST', credentials: 'include'});
+            location.reload();
         }
 
-        async function fetchMessages() {
+        function loadDashboardData() {
+            loadStats();
+            loadMessages();
+            loadRelays();
+        }
+
+        async function loadStats() {
             try {
-                const response = await fetch('/api/messages?limit=10');
-                const messages = await response.json();
+                const res = await fetch('/api/status', {credentials: 'include'});
+                const data = await res.json();
                 
-                const messagesList = document.getElementById('messagesList');
+                const uptime = Math.floor((Date.now() - data.stats.startTime) / 1000);
+                const hours = Math.floor(uptime / 3600);
+                const minutes = Math.floor((uptime % 3600) / 60);
+                document.getElementById('uptime').textContent = hours + 'h ' + minutes + 'm';
                 
-                if (!messages || messages.length === 0) {
-                    messagesList.innerHTML = '<div class="empty">No messages yet</div>';
+                document.getElementById('messagesReceived').textContent = data.stats.messagesReceived || 0;
+                document.getElementById('messagesSent').textContent = data.stats.messagesSent || 0;
+                document.getElementById('queueSize').textContent = data.stats.performance?.queueSize || 0;
+                document.getElementById('successRate').textContent = data.stats.performance?.successRate || 'N/A';
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        async function loadMessages() {
+            const container = document.getElementById('messagesContainer');
+            
+            try {
+                const res = await fetch('/api/messages?limit=100', {credentials: 'include'});
+                const messages = await res.json();
+                
+                if (messages.length === 0) {
+                    container.innerHTML = '<div class="empty-state">💬 No messages yet</div>';
                     return;
                 }
                 
-                messagesList.innerHTML = messages.map(msg => `
-                    <div class="message ${msg.role === 'bot' ? 'bot-message' : 'user-message'}">
-                        <div class="message-header">
-                            <span>${msg.role === 'bot' ? 'Bot' : 'User'}</span>
-                            <span>${new Date(msg.timestamp).toLocaleString()}</span>
+                messages.sort((a, b) => b.timestamp - a.timestamp);
+                
+                container.innerHTML = messages.map(msg => {
+                    const isBot = msg.role === 'bot' || msg.role === 'assistant';
+                    const date = new Date(msg.timestamp);
+                    const formattedDate = date.toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+                    
+                    const senderShort = msg.sender ? 
+                        msg.sender.substring(0, 8) + '...' + msg.sender.substring(msg.sender.length - 8) : 
+                        'Unknown';
+                    
+                    return `
+                        <div class="message-item ${isBot ? 'bot-message' : 'user-message'}">
+                            <div class="message-header">
+                                <div class="message-sender">
+                                    <span class="sender-badge ${isBot ? 'bot' : 'user'}">${isBot ? 'BOT' : 'USER'}</span>
+                                    <span class="sender-pubkey" title="${msg.sender || 'N/A'}">${senderShort}</span>
+                                </div>
+                                <div class="message-time">${formattedDate}</div>
+                            </div>
+                            <div class="message-content">${escapeHtml(msg.content)}</div>
+                            <div class="message-meta">
+                                <span>📝 ${msg.role}</span>
+                                ${msg.relay ? '<span>🔗 ' + msg.relay + '</span>' : ''}
+                            </div>
                         </div>
-                        <div class="message-content">${msg.content}</div>
-                    </div>
-                `).join('');
-            } catch (error) {
-                console.error('Failed to fetch messages:', error);
+                    `;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">⚠️ Failed to load messages</div>';
             }
         }
 
-        fetchStats();
-        fetchMessages();
-        setInterval(fetchStats, 5000);
-        setInterval(fetchMessages, 5000);
+        async function loadRelays() {
+            const container = document.getElementById('relaysContainer');
+            
+            try {
+                const res = await fetch('/api/relays', {credentials: 'include'});
+                const relays = await res.json();
+                
+                const connectedCount = relays.filter(r => r.connected).length;
+                document.getElementById('activeRelays').textContent = connectedCount;
+                
+                if (relays.length === 0) {
+                    container.innerHTML = '<div class="empty-state">🔌 No relays configured</div>';
+                    return;
+                }
+                
+                container.innerHTML = `
+                    <table class="relay-table">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>URL</th>
+                                <th>Messages Received</th>
+                                <th>Messages Sent</th>
+                                <th>Errors</th>
+                                <th>Last Seen</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${relays.map(relay => `
+                                <tr>
+                                    <td>
+                                        <span class="relay-status-dot ${relay.connected ? 'connected' : 'disconnected'}"></span>
+                                        ${relay.connected ? 'Connected' : 'Disconnected'}
+                                    </td>
+                                    <td><span class="relay-url">${relay.url}</span></td>
+                                    <td>${relay.messagesReceived || 0}</td>
+                                    <td>${relay.messagesSent || 0}</td>
+                                    <td>${relay.errors || 0}</td>
+                                    <td>${relay.lastSeenFormatted || 'Never'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">⚠️ Failed to load relays</div>';
+            }
+        }
+
+        function escapeHtml(text) {
+            const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        checkAuth();
     </script>
 </body>
 </html>

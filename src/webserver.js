@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import session from 'express-session';
+import bcrypt from 'bcryptjs';
 import { logger } from './logger.js';
 import { ConversationDatabase } from './database.js';
 
@@ -12,9 +14,10 @@ const __dirname = path.dirname(__filename);
  * Web UI Server for monitoring the bot
  */
 export class WebServer {
-  constructor(bot, port = 3000) {
+  constructor(bot, port = 3000, dashboardPassword = null) {
     this.bot = bot;
     this.port = port;
+    this.dashboardPassword = dashboardPassword;
     this.app = express();
     this.server = null;
     this.db = new ConversationDatabase('./data/conversations');
@@ -24,11 +27,38 @@ export class WebServer {
   }
 
   /**
+   * Check if authenticated
+   */
+  requireAuth(req, res, next) {
+    if (req.session && req.session.authenticated) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
+  /**
    * Setup middleware
    */
   setupMiddleware() {
-    this.app.use(cors());
+    this.app.use(cors({
+      origin: true,
+      credentials: true
+    }));
     this.app.use(express.json());
+    
+    // Session middleware
+    this.app.use(session({
+      secret: this.dashboardPassword || 'zapai-secret-key-change-this',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: false, // set to true if using HTTPS
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      }
+    }));
+    
     this.app.use(express.static(path.join(__dirname, '../public')));
   }
 
@@ -36,8 +66,40 @@ export class WebServer {
    * Setup routes
    */
   setupRoutes() {
-    // API Routes
-    this.app.get('/api/status', (req, res) => {
+    // Login route
+    this.app.post('/api/login', (req, res) => {
+      const { password } = req.body;
+      
+      if (!this.dashboardPassword) {
+        // No password set, allow access
+        req.session.authenticated = true;
+        return res.json({ success: true, message: 'Logged in successfully' });
+      }
+      
+      if (password === this.dashboardPassword) {
+        req.session.authenticated = true;
+        res.json({ success: true, message: 'Logged in successfully' });
+      } else {
+        res.status(401).json({ success: false, message: 'Invalid password' });
+      }
+    });
+
+    // Logout route
+    this.app.post('/api/logout', (req, res) => {
+      req.session.destroy();
+      res.json({ success: true, message: 'Logged out successfully' });
+    });
+
+    // Check auth status
+    this.app.get('/api/auth/check', (req, res) => {
+      res.json({ 
+        authenticated: req.session && req.session.authenticated === true,
+        requiresAuth: !!this.dashboardPassword
+      });
+    });
+
+    // Protected API Routes
+    this.app.get('/api/status', this.requireAuth.bind(this), (req, res) => {
       const stats = this.bot.getStats();
       res.json({
         status: 'running',
@@ -67,7 +129,7 @@ export class WebServer {
       });
     });
 
-    this.app.get('/api/relays', (req, res) => {
+    this.app.get('/api/relays', this.requireAuth.bind(this), (req, res) => {
       const relays = Array.from(this.bot.relayStatus.values()).map(relay => ({
         ...relay,
         lastSeenFormatted: relay.lastSeen ? new Date(relay.lastSeen).toLocaleString('en-US') : 'Never',
@@ -75,9 +137,9 @@ export class WebServer {
       res.json(relays);
     });
 
-    this.app.get('/api/messages', async (req, res) => {
+    this.app.get('/api/messages', this.requireAuth.bind(this), async (req, res) => {
       try {
-        const limit = parseInt(req.query.limit) || 50;
+        const limit = parseInt(req.query.limit) || 100;
         const messages = await this.db.getRecentMessages(limit);
         res.json(messages);
       } catch (error) {
@@ -86,7 +148,7 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/conversations', async (req, res) => {
+    this.app.get('/api/conversations', this.requireAuth.bind(this), async (req, res) => {
       try {
         const conversations = await this.db.getAllConversations();
         res.json(conversations);
@@ -96,7 +158,7 @@ export class WebServer {
       }
     });
 
-    this.app.get('/api/conversation/:pubkey', async (req, res) => {
+    this.app.get('/api/conversation/:pubkey', this.requireAuth.bind(this), async (req, res) => {
       try {
         const { pubkey } = req.params;
         const messages = await this.db.getConversation(pubkey);

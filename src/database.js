@@ -150,6 +150,7 @@ export class ConversationDatabase extends Database {
           content: value.message,
           timestamp: value.timestamp,
           pubkey: value.pubkey,
+          sender: value.pubkey, // Add sender field for dashboard
         });
         
         // Stop when we reach the limit

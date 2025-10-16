@@ -46,7 +46,8 @@ const bot = new NostrBot({
 
 // Initialize web server
 const webPort = parseInt(process.env.WEB_PORT) || 3000;
-const webServer = new WebServer(bot, webPort);
+const dashboardPassword = process.env.DASHBOARD_PASSWORD || null;
+const webServer = new WebServer(bot, webPort, dashboardPassword);
 
 // Handle graceful shutdown
 async function shutdown() {
