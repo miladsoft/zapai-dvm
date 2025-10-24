@@ -2,12 +2,13 @@ import { NRelay1, NSecSigner } from '@nostrify/nostrify';
 import { nip19 } from 'nostr-tools';
 import { logger } from './logger.js';
 import { Database } from './database.js';
+import { ZapDatabase } from './zapdb.js';
 import { GeminiAI } from './gemini.js';
 import { MessageQueue } from './queue.js';
 import { RateLimiter } from './ratelimiter.js';
 
 /**
- * Scalable Nostr AI Bot with queue system and rate limiting
+ * Scalable Nostr AI Bot with queue system, rate limiting, and Zap support
  */
 export class NostrBot {
   constructor(config) {
@@ -19,6 +20,7 @@ export class NostrBot {
     this.processedMessages = new Map(); // Track by pubkey+content to prevent duplicate responses
     this.controllers = [];
     this.db = new Database('./data/conversations');
+    this.zapDb = new ZapDatabase('./data/zaps');
     
     // Initialize Gemini AI
     this.gemini = new GeminiAI(config.geminiApiKey, config.botName);
@@ -87,8 +89,9 @@ export class NostrBot {
   async start() {
     logger.info('Starting ZapAI (Data Vending Machine) specialized for ZapAI platform...');
 
-    // Initialize database
+    // Initialize databases
     await this.db.init();
+    await this.zapDb.init();
 
     // Initialize signer
     await this.init();
@@ -132,7 +135,9 @@ export class NostrBot {
 
     // Subscribe to multiple event types:
     // 1. Kind 4: Encrypted DMs
-    // 2. Kind 1: Public mentions and replies
+    // 2. Kind 1: Public mentions and replies  
+    // 3. Kind 9735: Zap receipts
+    // 4. Kind 1006: Balance requests
     const filters = [
       {
         kinds: [4], // Encrypted DMs
@@ -144,11 +149,23 @@ export class NostrBot {
         '#p': [this.pubkey],
         since: Math.floor(Date.now() / 1000),
       },
+      {
+        kinds: [9735], // Zap receipts
+        '#p': [this.pubkey],
+        since: Math.floor(Date.now() / 1000),
+      },
+      {
+        kinds: [1006], // Balance requests
+        '#p': [this.pubkey],
+        since: Math.floor(Date.now() / 1000),
+      },
     ];
 
     logger.info('Bot is now listening for:');
     logger.info('  • Encrypted DMs (kind 4)');
     logger.info('  • Public mentions & replies (kind 1)');
+    logger.info('  • Zap receipts (kind 9735)');
+    logger.info('  • Balance requests (kind 1006)');
     logger.info('Send a DM or mention @ZapAI to start chatting!');
 
     // Listen to each relay
@@ -261,6 +278,17 @@ export class NostrBot {
 
     // Skip messages from the bot itself
     if (event.pubkey === this.pubkey) {
+      return;
+    }
+
+    // Handle different event kinds
+    if (event.kind === 9735) {
+      // Zap receipt
+      await this.handleZapReceipt(event, relayUrl);
+      return;
+    } else if (event.kind === 1006) {
+      // Balance request
+      await this.handleBalanceRequest(event, relayUrl);
       return;
     }
 
@@ -688,5 +716,185 @@ export class NostrBot {
     if (hours > 0) return `${hours}h ${minutes % 60}m`;
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
+  }
+
+  /**
+   * Handle Zap receipt (kind 9735)
+   */
+  async handleZapReceipt(event, relayUrl) {
+    try {
+      logger.info(`Zap receipt received from ${event.pubkey.substring(0, 8)}... on ${relayUrl}`);
+      logger.info(`Zap event tags: ${JSON.stringify(event.tags)}`);
+      logger.info(`Zap event content: ${event.content}`);
+      
+      // Extract zap details from event
+      // Find bolt11 invoice in tags
+      const bolt11Tag = event.tags.find(tag => tag[0] === 'bolt11');
+      const bolt11 = bolt11Tag ? bolt11Tag[1] : null;
+      logger.info(`bolt11: ${bolt11 ? bolt11.substring(0, 20) + '...' : 'NOT FOUND'}`);
+      
+      // Find description tag (contains zap request)
+      const descTag = event.tags.find(tag => tag[0] === 'description');
+      let zapRequest = null;
+      let sender = event.pubkey;
+      let amount = 0;
+      
+      if (descTag && descTag[1]) {
+        try {
+          zapRequest = JSON.parse(descTag[1]);
+          sender = zapRequest.pubkey || event.pubkey;
+          logger.info(`Zap request parsed. Sender: ${sender.substring(0, 8)}...`);
+          
+          // Extract amount from zap request tags (inside description)
+          if (zapRequest.tags && Array.isArray(zapRequest.tags)) {
+            const amountTag = zapRequest.tags.find(tag => Array.isArray(tag) && tag[0] === 'amount');
+            logger.info(`Amount tag found in zapRequest: ${amountTag ? amountTag[1] : 'NOT FOUND'}`);
+            if (amountTag && amountTag[1]) {
+              amount = Math.floor(parseInt(amountTag[1]) / 1000); // Convert millisats to sats
+              logger.info(`Amount extracted: ${amount} sats (from ${amountTag[1]} millisats)`);
+            }
+          }
+          
+          // Fallback: Try to find amount tag in receipt event itself
+          if (amount === 0) {
+            const receiptAmountTag = event.tags.find(tag => tag[0] === 'amount');
+            if (receiptAmountTag && receiptAmountTag[1]) {
+              amount = Math.floor(parseInt(receiptAmountTag[1]) / 1000);
+              logger.info(`Amount extracted from receipt: ${amount} sats`);
+            }
+          }
+        } catch (e) {
+          logger.warn('Failed to parse zap request:', e);
+        }
+      } else {
+        logger.warn('Description tag not found in zap receipt');
+      }
+      
+      if (amount === 0) {
+        logger.warn('Zap amount is zero or could not be extracted');
+        return;
+      }
+      
+      // Save zap to database
+      const zapId = await this.zapDb.saveZap({
+        sender: sender,
+        amount: amount,
+        zapRequest: zapRequest?.id,
+        zapReceipt: event.id,
+        bolt11: bolt11,
+        description: JSON.stringify(zapRequest),
+      });
+      
+      // Get updated balance
+      const balance = await this.zapDb.getBalance(sender);
+      
+      logger.info(`Zap processed: ${amount} sats from ${sender.substring(0, 8)}..., new balance: ${balance} sats`);
+      
+      // Publish balance update event (kind 1 notification)
+      await this.publishBalanceUpdate(sender, balance, amount);
+      
+    } catch (error) {
+      logger.error('Failed to handle zap receipt:', error);
+    }
+  }
+
+  /**
+   * Handle balance request (kind 1006)
+   */
+  async handleBalanceRequest(event, relayUrl) {
+    try {
+      logger.info(`Balance request from ${event.pubkey.substring(0, 8)}... on ${relayUrl}`);
+      
+      // Get user's balance
+      const balance = await this.zapDb.getBalance(event.pubkey);
+      
+      // Publish balance response as kind 1006 event
+      await this.publishBalanceResponse(event.pubkey, balance);
+      
+      logger.info(`Balance response published for ${event.pubkey.substring(0, 8)}...: ${balance} sats`);
+      
+    } catch (error) {
+      logger.error('Failed to handle balance request:', error);
+    }
+  }
+
+  /**
+   * Publish balance update notification (kind 1)
+   */
+  async publishBalanceUpdate(pubkey, balance, zapAmount) {
+    try {
+      // Publish kind 1 notification
+      const eventTemplate = {
+        kind: 1,
+        content: `⚡ Zap received! +${zapAmount} sats\n💰 New balance: ${balance} sats\n\nThank you for supporting ZapAI! 🙏`,
+        tags: [
+          ['p', pubkey], // Tag the user
+        ],
+        created_at: Math.floor(Date.now() / 1000),
+      };
+
+      const signedEvent = await this.signer.signEvent(eventTemplate);
+
+      // Publish to all relays
+      const publishPromises = this.relays.map(({ relay, url }) => {
+        return relay.event(signedEvent).catch(error => {
+          logger.debug(`Failed to publish balance update to ${url}: ${error.message}`);
+        });
+      });
+
+      await Promise.allSettled(publishPromises);
+      logger.info(`Balance update (kind 1) published for ${pubkey.substring(0, 8)}...`);
+      
+      // Also publish kind 1006 balance response for subscribers
+      await this.publishBalanceResponse(pubkey, balance);
+      
+    } catch (error) {
+      logger.error('Failed to publish balance update:', error);
+    }
+  }
+
+  /**
+   * Publish balance response (kind 1006)
+   * This allows clients to subscribe and get real-time balance updates
+   */
+  async publishBalanceResponse(pubkey, balance) {
+    try {
+      const eventTemplate = {
+        kind: 1006,
+        content: JSON.stringify({
+          balance: balance,
+          currency: 'sats',
+          timestamp: Date.now()
+        }),
+        tags: [
+          ['p', pubkey], // Tag the user
+          ['balance', balance.toString()], // Balance tag for easy filtering
+        ],
+        created_at: Math.floor(Date.now() / 1000),
+      };
+
+      const signedEvent = await this.signer.signEvent(eventTemplate);
+
+      // Publish to all relays
+      const publishPromises = this.relays.map(({ relay, url }) => {
+        return relay.event(signedEvent)
+          .then(() => {
+            logger.debug(`✓ Balance response (kind 1006) published to ${url}`);
+            return { url, success: true };
+          })
+          .catch(error => {
+            logger.debug(`Failed to publish balance response to ${url}: ${error.message}`);
+            return { url, success: false };
+          });
+      });
+
+      const results = await Promise.allSettled(publishPromises);
+      const successCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      
+      logger.info(`Balance response (kind 1006) published to ${successCount}/${this.relays.length} relays for ${pubkey.substring(0, 8)}...`);
+      
+    } catch (error) {
+      logger.error('Failed to publish balance response:', error);
+    }
   }
 }

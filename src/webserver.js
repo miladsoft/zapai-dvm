@@ -169,6 +169,51 @@ export class WebServer {
       }
     });
 
+    // Zap endpoints
+    this.app.get('/api/zaps', this.requireAuth.bind(this), async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit) || 100;
+        const zaps = await this.bot.zapDb.getAllZaps(limit);
+        res.json(zaps);
+      } catch (error) {
+        logger.error('Failed to get zaps:', error);
+        res.status(500).json({ error: 'Failed to get zaps' });
+      }
+    });
+
+    this.app.get('/api/zaps/:pubkey', this.requireAuth.bind(this), async (req, res) => {
+      try {
+        const { pubkey } = req.params;
+        const limit = parseInt(req.query.limit) || 50;
+        const zaps = await this.bot.zapDb.getUserZaps(pubkey, limit);
+        res.json(zaps);
+      } catch (error) {
+        logger.error('Failed to get user zaps:', error);
+        res.status(500).json({ error: 'Failed to get user zaps' });
+      }
+    });
+
+    this.app.get('/api/balance/:pubkey', this.requireAuth.bind(this), async (req, res) => {
+      try {
+        const { pubkey } = req.params;
+        const balance = await this.bot.zapDb.getBalance(pubkey);
+        res.json({ pubkey, balance });
+      } catch (error) {
+        logger.error('Failed to get balance:', error);
+        res.status(500).json({ error: 'Failed to get balance' });
+      }
+    });
+
+    this.app.get('/api/balances', this.requireAuth.bind(this), async (req, res) => {
+      try {
+        const balances = await this.bot.zapDb.getAllBalances();
+        res.json(balances);
+      } catch (error) {
+        logger.error('Failed to get all balances:', error);
+        res.status(500).json({ error: 'Failed to get all balances' });
+      }
+    });
+
     // Health check with detailed status
     this.app.get('/health', (req, res) => {
       const stats = this.bot.getStats();
