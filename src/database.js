@@ -37,7 +37,7 @@ export class Database {
    * @param {string} pubkey - User's public key
    * @param {string} message - Message content
    * @param {boolean} isFromBot - Whether message is from bot
-   * @param {object} metadata - Additional metadata (eventId, messageType, replyTo)
+   * @param {object} metadata - Additional metadata (eventId, messageType, replyTo, sessionId)
    */
   async saveMessage(pubkey, message, isFromBot = false, metadata = {}) {
     try {
@@ -67,6 +67,7 @@ export class Database {
         replyTo: metadata.replyTo || null, // ID of the message this is replying to
         eventId: metadata.eventId || null, // Nostr event ID
         eventKind: metadata.eventKind || null, // Nostr event kind (1=public, 4=DM)
+        sessionId: metadata.sessionId || null, // Session ID for tracking conversations
       });
       
       // Save the hash to prevent duplicates
@@ -99,6 +100,37 @@ export class Database {
       return messages.reverse();
     } catch (error) {
       logger.error('Failed to get conversation:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get conversation history for a user filtered by session ID
+   */
+  async getConversationBySession(pubkey, sessionId, limit = 50) {
+    try {
+      const messages = [];
+      const prefix = `${pubkey}:`;
+
+      for (const { key, value } of this.db.getRange({
+        start: prefix,
+        end: `${prefix}\xFF`,
+        reverse: true,
+      })) {
+        // Filter by session ID
+        if (value.sessionId === sessionId) {
+          messages.push(value);
+          
+          // Stop when we reach the limit
+          if (messages.length >= limit) {
+            break;
+          }
+        }
+      }
+
+      return messages.reverse();
+    } catch (error) {
+      logger.error('Failed to get conversation by session:', error);
       return [];
     }
   }
@@ -168,6 +200,7 @@ export class ConversationDatabase extends Database {
           replyTo: value.replyTo || null,
           eventId: value.eventId || null,
           eventKind: value.eventKind || null,
+          sessionId: value.sessionId || null, // Add session ID
         });
         
         // Stop when we reach the limit

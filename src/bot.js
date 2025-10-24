@@ -330,6 +330,18 @@ export class NostrBot {
   async processMessage(event, relayUrl) {
     try {
       let messageContent;
+      let sessionId = null;
+      
+      // Extract session ID from tags (for kind 4 DMs)
+      if (event.kind === 4) {
+        const sessionTag = event.tags.find(tag => tag[0] === 'session');
+        if (sessionTag && sessionTag[1]) {
+          sessionId = sessionTag[1];
+          logger.info(`[Session: ${sessionId}] Processing DM from ${event.pubkey.substring(0, 8)}...`);
+        } else {
+          logger.warn(`DM from ${event.pubkey.substring(0, 8)}... received without session tag - creating new conversation`);
+        }
+      }
       
       // Handle different event kinds
       if (event.kind === 4) {
@@ -376,7 +388,7 @@ export class NostrBot {
 
       logger.debug(`Processing: ${messageContent.substring(0, 50)}...`);
 
-      // Save user message to database with metadata
+      // Save user message to database with metadata including session
       const userMessageId = await this.db.saveMessage(
         event.pubkey, 
         messageContent, 
@@ -384,12 +396,17 @@ export class NostrBot {
         {
           eventId: event.id,
           eventKind: event.kind,
-          messageType: 'question'
+          messageType: 'question',
+          sessionId: sessionId
         }
       );
 
-      // Get conversation history from database
-      const conversationHistory = await this.db.getConversation(event.pubkey);
+      // Get conversation history from database (filtered by session if available)
+      const conversationHistory = sessionId 
+        ? await this.db.getConversationBySession(event.pubkey, sessionId)
+        : await this.db.getConversation(event.pubkey);
+
+      logger.info(`[Session: ${sessionId || 'none'}] Retrieved ${conversationHistory.length} messages from history for ${event.pubkey.substring(0, 8)}...`);
 
       // Generate AI response using Gemini (with circuit breaker protection)
       const response = await this.gemini.generateResponse(messageContent, conversationHistory);
@@ -400,8 +417,8 @@ export class NostrBot {
       // Send response based on event kind
       let responseEventId = null;
       if (event.kind === 4) {
-        // Reply with encrypted DM
-        const dmEvent = await this.sendDM(event.pubkey, response);
+        // Reply with encrypted DM - include session tag
+        const dmEvent = await this.sendDM(event.pubkey, response, sessionId);
         responseEventId = dmEvent?.id;
       } else if (event.kind === 1) {
         // Reply with public post
@@ -418,7 +435,8 @@ export class NostrBot {
           eventId: responseEventId,
           eventKind: event.kind,
           messageType: 'response',
-          replyTo: userMessageId // Link to the user's question
+          replyTo: userMessageId, // Link to the user's question
+          sessionId: sessionId // Include session for tracking
         }
       );
 
@@ -447,7 +465,7 @@ export class NostrBot {
   /**
    * Send an encrypted DM to a user
    */
-  async sendDM(recipientPubkey, content) {
+  async sendDM(recipientPubkey, content, sessionId = null) {
     try {
       // Encrypt the content using NIP-04
       let encryptedContent;
@@ -457,11 +475,20 @@ export class NostrBot {
         throw new Error('NIP-04 encryption not supported by signer');
       }
 
+      // Create tags array with required p tag
+      const tags = [['p', recipientPubkey]];
+      
+      // Add session tag if sessionId is provided
+      if (sessionId) {
+        tags.push(['session', sessionId]);
+        logger.debug(`Adding session tag: ${sessionId}`);
+      }
+
       // Create the event
       const eventTemplate = {
         kind: 4,
         content: encryptedContent,
-        tags: [['p', recipientPubkey]],
+        tags: tags,
         created_at: Math.floor(Date.now() / 1000),
       };
 

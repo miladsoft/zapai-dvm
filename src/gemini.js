@@ -23,7 +23,7 @@ export class GeminiAI {
     this.circuitBreaker = new CircuitBreaker({
       failureThreshold: 5,    // Open after 5 failures
       successThreshold: 2,    // Close after 2 successes
-      timeout: 30000,         // 30 second timeout per request
+      timeout: 50000,         // 50 second timeout per request (increased from 30)
       resetTimeout: 30000,    // Try again after 30 seconds
     });
     
@@ -41,9 +41,12 @@ export class GeminiAI {
   async generateResponse(message, conversationHistory = []) {
     this.stats.requests++;
     
+    logger.info(`Generating response for message (${conversationHistory.length} history messages)...`);
+    
     // Use circuit breaker to protect against API failures
     return this.circuitBreaker.execute(
       async () => {
+        logger.debug('Circuit breaker executing request...');
         // Build system instructions
         let systemInstructions = `You are ${this.botName}, a helpful AI assistant on Nostr (a decentralized social network). `;
         systemInstructions += 'You communicate via encrypted direct messages. ';
@@ -62,6 +65,7 @@ export class GeminiAI {
               content: msg.message,
             });
           });
+          logger.debug(`Added ${messages.length} messages from conversation history`);
         }
 
         // Add current message
@@ -70,6 +74,7 @@ export class GeminiAI {
           content: message,
         });
 
+        logger.debug('Calling Gemini API...');
         const result = await generateText({
           model: this.model,
           system: systemInstructions,
@@ -80,7 +85,7 @@ export class GeminiAI {
           maxTokens: this.modelConfig.maxTokens,
         });
 
-        logger.debug('Gemini response generated successfully');
+        logger.info('Gemini response generated successfully');
         this.stats.successful++;
         return result.text;
       },
