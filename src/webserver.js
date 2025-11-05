@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 import { logger } from './logger.js';
-import { ConversationDatabase } from './database.js';
+import { Database } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +20,7 @@ export class WebServer {
     this.dashboardPassword = dashboardPassword;
     this.app = express();
     this.server = null;
-    this.db = new ConversationDatabase('./data/conversations');
+    this.db = new Database('./data/conversations');
     
     this.setupMiddleware();
     this.setupRoutes();

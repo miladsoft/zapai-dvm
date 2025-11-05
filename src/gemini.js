@@ -130,15 +130,22 @@ export class GeminiAI {
         // Build conversation history for chat (keep it bounded)
         const chatHistory = [];
         const recentHistory = conversationHistory.slice(-40); // keep up to last 40 messages for context
+        
+        logger.info(`🔄 Processing ${conversationHistory.length} messages, using last ${recentHistory.length} for AI context`);
+        
         if (recentHistory.length > 0) {
           // Add messages in chronological order
-          recentHistory.forEach((msg) => {
+          recentHistory.forEach((msg, index) => {
             chatHistory.push({
               role: msg.isFromBot ? 'model' : 'user',
               parts: [{ text: msg.message }],
             });
+            const preview = msg.message.substring(0, 50).replace(/\n/g, ' ');
+            logger.info(`  📨 [${index + 1}] ${msg.isFromBot ? 'MODEL' : 'USER'}: "${preview}${msg.message.length > 50 ? '...' : ''}"`);
           });
-          logger.debug(`Added ${chatHistory.length} messages from conversation history`);
+          logger.info(`✅ Built chat history with ${chatHistory.length} messages for Gemini API`);
+        } else {
+          logger.warn(`⚠️  Empty chat history! Starting fresh conversation.`);
         }
 
         // Build a short memory summary from the conversation history to provide persistent context
@@ -146,8 +153,10 @@ export class GeminiAI {
         try {
           memorySummary = await this.summarizeMemory(recentHistory, model);
           if (memorySummary) {
-            logger.debug('Memory summary created');
+            logger.info(`🧠 Memory summary created: "${memorySummary.substring(0, 100)}${memorySummary.length > 100 ? '...' : ''}"`);
             systemInstructions += `\n\nMEMORY SUMMARY: ${memorySummary}`;
+          } else {
+            logger.info(`ℹ️  No memory summary created (empty or first conversation)`);
           }
         } catch (e) {
           logger.warn('Failed to create memory summary:', e.message || e);
@@ -156,7 +165,7 @@ export class GeminiAI {
         // Create enhanced prompt for better search results
         const enhancedPrompt = `${systemInstructions}\n\nUser question: ${message}`;
 
-        logger.debug('Calling Gemini API with Google Search grounding...');
+        logger.info(`🚀 Sending to Gemini: ${chatHistory.length} history messages + current question`);
         
         // Start chat with history
         const chat = model.startChat({

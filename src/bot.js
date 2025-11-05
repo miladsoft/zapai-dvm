@@ -508,19 +508,31 @@ export class NostrBot {
       logger.info(`✓ Deducted ${cost} sats from ${event.pubkey.substring(0, 8)}..., new balance: ${newBalance} sats`);
       // =============================================
 
-      // Get conversation history from database (filtered by session if available)
-      const conversationHistory = sessionId 
-        ? await this.db.getConversationBySession(event.pubkey, sessionId)
-        : await this.db.getConversation(event.pubkey);
+      // Get conversation history from database
+      // If session exists: filter by session ID
+      // If no session: get last 100 messages for this user (ignore session)
+      let conversationHistory;
+      if (sessionId) {
+        conversationHistory = await this.db.getConversationBySession(event.pubkey, sessionId, 100);
+        logger.info(`[Session: ${sessionId}] Retrieved ${conversationHistory.length} messages from session history for ${event.pubkey.substring(0, 8)}...`);
+      } else {
+        conversationHistory = await this.db.getConversation(event.pubkey, 100);
+        logger.info(`[No Session] Retrieved ${conversationHistory.length} messages from ALL conversations for ${event.pubkey.substring(0, 8)}...`);
+      }
 
-      logger.info(`[Session: ${sessionId || 'none'}] Retrieved ${conversationHistory.length} messages from history for ${event.pubkey.substring(0, 8)}...`);
+      // Log the conversation history being sent to AI
+      if (conversationHistory.length > 0) {
+        logger.info(`📝 History being sent to AI (${conversationHistory.length} messages):`);
+        conversationHistory.forEach((msg, index) => {
+          const preview = msg.message.substring(0, 60).replace(/\n/g, ' ');
+          logger.info(`  [${index + 1}] ${msg.isFromBot ? 'BOT' : 'USER'}: "${preview}${msg.message.length > 60 ? '...' : ''}"`);
+        });
+      } else {
+        logger.warn(`⚠️  No history found! Sending empty history to AI.`);
+      }
 
       // Generate AI response using Gemini (with circuit breaker protection)
       const response = await this.gemini.generateResponse(messageContent, conversationHistory);
-
-      // Add balance footer to response
-      const balanceFooter = `\n\n💰 Balance: ${newBalance} sats | 💸 Cost: ${cost} sats`;
-      const fullResponse = response + balanceFooter;
 
       // Add delay to seem more natural
       await this.sleep(this.config.responseDelay);
@@ -529,11 +541,11 @@ export class NostrBot {
       let responseEventId = null;
       if (event.kind === 4) {
         // Reply with encrypted DM - include session tag
-        const dmEvent = await this.sendDM(event.pubkey, fullResponse, sessionId);
+        const dmEvent = await this.sendDM(event.pubkey, response, sessionId);
         responseEventId = dmEvent?.id;
       } else if (event.kind === 1) {
         // Reply with public post
-        const replyEvent = await this.sendReply(event, fullResponse);
+        const replyEvent = await this.sendReply(event, response);
         responseEventId = replyEvent?.id;
       }
 
@@ -543,7 +555,7 @@ export class NostrBot {
       // Save bot response to database with metadata linking to user message
       await this.db.saveMessage(
         event.pubkey, 
-        fullResponse, 
+        response, 
         true,
         {
           eventId: responseEventId,
