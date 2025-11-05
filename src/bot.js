@@ -417,7 +417,7 @@ export class NostrBot {
       logger.debug(`Processing: ${messageContent.substring(0, 50)}...`);
 
       // Save user message to database with metadata including session
-      const userMessageId = await this.db.saveMessage(
+      const userMessageRecord = await this.db.saveMessage(
         event.pubkey, 
         messageContent, 
         false,
@@ -428,6 +428,85 @@ export class NostrBot {
           sessionId: sessionId
         }
       );
+      if (!userMessageRecord) {
+        logger.error('Failed to persist user message, aborting processing');
+        return;
+      }
+
+      if (userMessageRecord.sessionId) {
+        sessionId = userMessageRecord.sessionId;
+      }
+
+      if (userMessageRecord.duplicate) {
+        logger.info(`Duplicate message ignored for ${event.pubkey.substring(0, 8)}... (eventId=${event.id})`);
+        return;
+      }
+
+      // =============================================
+      // CHECK BALANCE AND DEDUCT BEFORE GENERATING RESPONSE
+      // =============================================
+      const cost = event.kind === 4 ? 20 : 50;
+      const currentBalance = await this.zapDb.getBalance(event.pubkey);
+      
+      logger.info(`User ${event.pubkey.substring(0, 8)}... balance: ${currentBalance} sats, required: ${cost} sats`);
+      
+      if (currentBalance < cost) {
+        logger.warn(`Insufficient balance for ${event.pubkey.substring(0, 8)}...: has ${currentBalance} sats, needs ${cost} sats`);
+        
+        const insufficientBalanceMsg = `❌ Insufficient balance!\n\n` +
+          `💰 Your balance: ${currentBalance} sats\n` +
+          `💸 Required: ${cost} sats (${event.kind === 4 ? 'DM' : 'Public mention/reply'})\n\n` +
+          `Please send a Zap to top up your balance and continue using ZapAI. Thank you! ⚡`;
+        
+        if (event.kind === 4) {
+          await this.sendDM(event.pubkey, insufficientBalanceMsg, sessionId);
+        } else if (event.kind === 1) {
+          await this.sendReply(event, insufficientBalanceMsg);
+        }
+
+        await this.db.saveMessage(
+          event.pubkey,
+          insufficientBalanceMsg,
+          true,
+          {
+            eventKind: event.kind,
+            messageType: 'system',
+            sessionId: sessionId,
+          }
+        );
+        
+        return; // Stop processing
+      }
+      
+      // Deduct the cost from user's balance
+      const newBalance = await this.zapDb.deductFromBalance(event.pubkey, cost);
+      
+      if (newBalance === false) {
+        logger.error(`Failed to deduct balance for ${event.pubkey.substring(0, 8)}...`);
+        
+        const errorMsg = "⚠️ An error occurred while processing your payment. Please try again.";
+        if (event.kind === 4) {
+          await this.sendDM(event.pubkey, errorMsg, sessionId);
+        } else if (event.kind === 1) {
+          await this.sendReply(event, errorMsg);
+        }
+
+        await this.db.saveMessage(
+          event.pubkey,
+          errorMsg,
+          true,
+          {
+            eventKind: event.kind,
+            messageType: 'system',
+            sessionId: sessionId,
+          }
+        );
+        
+        return;
+      }
+      
+      logger.info(`✓ Deducted ${cost} sats from ${event.pubkey.substring(0, 8)}..., new balance: ${newBalance} sats`);
+      // =============================================
 
       // Get conversation history from database (filtered by session if available)
       const conversationHistory = sessionId 
@@ -439,6 +518,10 @@ export class NostrBot {
       // Generate AI response using Gemini (with circuit breaker protection)
       const response = await this.gemini.generateResponse(messageContent, conversationHistory);
 
+      // Add balance footer to response
+      const balanceFooter = `\n\n💰 Balance: ${newBalance} sats | 💸 Cost: ${cost} sats`;
+      const fullResponse = response + balanceFooter;
+
       // Add delay to seem more natural
       await this.sleep(this.config.responseDelay);
 
@@ -446,30 +529,33 @@ export class NostrBot {
       let responseEventId = null;
       if (event.kind === 4) {
         // Reply with encrypted DM - include session tag
-        const dmEvent = await this.sendDM(event.pubkey, response, sessionId);
+        const dmEvent = await this.sendDM(event.pubkey, fullResponse, sessionId);
         responseEventId = dmEvent?.id;
       } else if (event.kind === 1) {
         // Reply with public post
-        const replyEvent = await this.sendReply(event, response);
+        const replyEvent = await this.sendReply(event, fullResponse);
         responseEventId = replyEvent?.id;
       }
+
+      // Publish balance update event (kind 1006) for real-time balance tracking
+      await this.publishBalanceResponse(event.pubkey, newBalance);
 
       // Save bot response to database with metadata linking to user message
       await this.db.saveMessage(
         event.pubkey, 
-        response, 
+        fullResponse, 
         true,
         {
           eventId: responseEventId,
           eventKind: event.kind,
           messageType: 'response',
-          replyTo: userMessageId, // Link to the user's question
+          replyTo: userMessageRecord.messageId, // Link to the user's question
           sessionId: sessionId // Include session for tracking
         }
       );
 
       const replyType = event.kind === 4 ? 'DM' : 'public reply';
-      logger.info(`✓ ${replyType} sent to ${event.pubkey.substring(0, 8)}...`);
+      logger.info(`✓ ${replyType} sent to ${event.pubkey.substring(0, 8)}... (Balance: ${newBalance} sats)`);
     } catch (error) {
       logger.error('Failed to process message:', error);
       this.stats.errors++;

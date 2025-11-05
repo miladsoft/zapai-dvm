@@ -33,6 +33,51 @@ export class GeminiAI {
   }
 
   /**
+   * Generate a concise memory summary from conversation history.
+   * Returns a short plain-text summary that the model can use as persistent context.
+   */
+  async summarizeMemory(conversationHistory = [], model) {
+    try {
+      if (!conversationHistory || conversationHistory.length === 0) return '';
+
+      // Compose a compact representation of the recent history
+      const recent = conversationHistory.slice(-40).map(m => `${m.isFromBot ? 'Assistant' : 'User'}: ${m.message}`).join('\n');
+
+      const prompt = `You are an assistant that extracts a short, useful "memory" from a conversation to help future replies.\n` +
+        `From the conversation below, produce a JSON object with the following keys:\n` +
+        `- summary: one or two short sentences that capture the user's goals and the current conversation state.\n` +
+        `- facts: an array of short facts (name, location, ongoing tasks, important dates) that should be remembered.\n` +
+        `- preferences: an array of user preferences (style, tone, dislikes) observed.\n` +
+        `Return only valid JSON. Conversation:\n\n${recent}`;
+
+      // Use a lightweight generation config for summarization
+      const summarizationModel = model;
+      const chat = summarizationModel.startChat();
+      const result = await chat.sendMessage(prompt, { temperature: 0.2, maxOutputTokens: 256 });
+      const response = await result.response;
+      const text = response.text();
+
+      // Try to parse the JSON; if parsing fails, return the raw text trimmed
+      try {
+        const parsed = JSON.parse(text);
+        // Build a short human-readable memory summary from parsed fields
+        const summaryParts = [];
+        if (parsed.summary) summaryParts.push(parsed.summary.trim());
+        if (Array.isArray(parsed.facts) && parsed.facts.length) summaryParts.push('Facts: ' + parsed.facts.join(', '));
+        if (Array.isArray(parsed.preferences) && parsed.preferences.length) summaryParts.push('Preferences: ' + parsed.preferences.join(', '));
+
+        return summaryParts.join(' | ');
+      } catch (e) {
+        // Not valid JSON - fallback to trimming the model output
+        return text.split('\n').slice(0,4).join(' ').trim();
+      }
+    } catch (error) {
+      logger.warn('summarizeMemory failed:', error.message || error);
+      return '';
+    }
+  }
+
+  /**
    * Generate a response to a message with circuit breaker protection and Google Search grounding
    */
   async generateResponse(message, conversationHistory = []) {
@@ -82,17 +127,30 @@ export class GeminiAI {
             ]
         });
 
-        // Build conversation history for chat
+        // Build conversation history for chat (keep it bounded)
         const chatHistory = [];
-        if (conversationHistory.length > 0) {
-          // Add up to last 10 messages from history
-          conversationHistory.slice(-10).forEach((msg) => {
+        const recentHistory = conversationHistory.slice(-40); // keep up to last 40 messages for context
+        if (recentHistory.length > 0) {
+          // Add messages in chronological order
+          recentHistory.forEach((msg) => {
             chatHistory.push({
               role: msg.isFromBot ? 'model' : 'user',
               parts: [{ text: msg.message }],
             });
           });
           logger.debug(`Added ${chatHistory.length} messages from conversation history`);
+        }
+
+        // Build a short memory summary from the conversation history to provide persistent context
+        let memorySummary = '';
+        try {
+          memorySummary = await this.summarizeMemory(recentHistory, model);
+          if (memorySummary) {
+            logger.debug('Memory summary created');
+            systemInstructions += `\n\nMEMORY SUMMARY: ${memorySummary}`;
+          }
+        } catch (e) {
+          logger.warn('Failed to create memory summary:', e.message || e);
         }
 
         // Create enhanced prompt for better search results
