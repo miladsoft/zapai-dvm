@@ -385,6 +385,14 @@ export class NostrBot {
     
     const normalizedMsg = message.toLowerCase().trim();
     
+    // Exclude profile-related questions (should go to AI)
+    const profileKeywords = ['identity', 'nip05', 'profile', 'name', 'who am i', 'about me', 'information about me'];
+    for (const keyword of profileKeywords) {
+      if (normalizedMsg.includes(keyword)) {
+        return false; // Not a balance request, let AI handle it
+      }
+    }
+    
     // Target words to match (with typo tolerance)
     const targetWords = ['balance', 'credit', 'wallet', 'sats'];
     
@@ -419,15 +427,14 @@ export class NostrBot {
       }
     }
     
-    // Extended pattern matching (very flexible)
+    // Extended pattern matching (very flexible) - but more specific
     const patterns = [
-      /balanc?e?/i,                          // balance, balanc, balane, etc.
-      /what.*my/i,                           // "what ... my"
-      /how\s+(much|many)/i,                  // "how much" or "how many"
-      /check.*my/i,                          // "check my ..."
-      /show.*my/i,                           // "show my ..."
-      /my.*(credit|wallet|account)/i,        // "my credit/wallet/account"
-      /^(cr[eai]dit|wall[eai]t|sats?)\??$/i // Single word with typos
+      /^balance\??$/i,                       // Just "balance" or "balance?"
+      /^my\s+balance\??$/i,                  // "my balance"
+      /how\s+(much|many)\s+(sats?|credit|balance)/i, // "how much sats/credit/balance"
+      /check\s+(my\s+)?(balance|credit|wallet)/i,    // "check balance/credit/wallet"
+      /show\s+(my\s+)?(balance|credit|wallet)/i,     // "show balance/credit/wallet"
+      /^(cr[eai]dit|wall[eai]t|sats?)\??$/i          // Single word with typos
     ];
     
     for (const pattern of patterns) {
@@ -440,12 +447,63 @@ export class NostrBot {
   }
 
   /**
+   * Fetch user metadata from relay (kind 0 event)
+   */
+  async fetchUserMetadata(pubkey) {
+    try {
+      logger.info(`Fetching metadata for ${pubkey.substring(0, 8)}...`);
+      
+      const filter = {
+        kinds: [0], // Metadata event
+        authors: [pubkey],
+        limit: 1
+      };
+      
+      // Try to get metadata from any available relay
+      for (const { relay, url } of this.relays) {
+        try {
+          for await (const msg of relay.req([filter], { signal: AbortSignal.timeout(5000) })) {
+            if (msg[0] === 'EVENT') {
+              const metadataEvent = msg[2];
+              const metadata = JSON.parse(metadataEvent.content);
+              logger.info(`✓ Metadata fetched for ${pubkey.substring(0, 8)}... from ${url}: ${metadata.name || 'unknown'}`);
+              return {
+                name: metadata.name || null,
+                displayName: metadata.display_name || metadata.displayName || null,
+                about: metadata.about || null,
+                picture: metadata.picture || null,
+                nip05: metadata.nip05 || null,
+                lud16: metadata.lud16 || null,
+                lud06: metadata.lud06 || null,
+                website: metadata.website || null,
+                banner: metadata.banner || null,
+                fetchedAt: Date.now(),
+                fetchedFrom: url
+              };
+            }
+          }
+        } catch (error) {
+          logger.debug(`Failed to fetch metadata from ${url}: ${error.message}`);
+          continue;
+        }
+      }
+      
+      logger.warn(`No metadata found for ${pubkey.substring(0, 8)}...`);
+      return null;
+    } catch (error) {
+      logger.error(`Error fetching user metadata:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Process a message (called by queue)
    */
   async processMessage(event, relayUrl) {
     try {
       let messageContent;
       let sessionId = null;
+      let userMetadata = null;
       
       // Extract session ID from tags (for kind 4 DMs)
       if (event.kind === 4) {
@@ -456,6 +514,9 @@ export class NostrBot {
         } else {
           logger.warn(`DM from ${event.pubkey.substring(0, 8)}... received without session tag - creating new conversation`);
         }
+        
+        // Fetch user metadata from relay (only for kind 4 DMs)
+        userMetadata = await this.fetchUserMetadata(event.pubkey);
       }
       
       // Handle different event kinds
@@ -503,17 +564,25 @@ export class NostrBot {
 
       logger.debug(`Processing: ${messageContent.substring(0, 50)}...`);
 
-      // Save user message to database with metadata including session
+      // Save user message to database with metadata including session and user metadata
+      const messageMetadata = {
+        eventId: event.id,
+        eventKind: event.kind,
+        messageType: 'question',
+        sessionId: sessionId
+      };
+
+      // Add user metadata if available (only for kind 4 DMs)
+      if (userMetadata && event.kind === 4) {
+        messageMetadata.userMetadata = userMetadata;
+        logger.info(`📋 User metadata attached: ${userMetadata.name || userMetadata.displayName || 'unknown'}`);
+      }
+
       const userMessageRecord = await this.db.saveMessage(
         event.pubkey, 
         messageContent, 
         false,
-        {
-          eventId: event.id,
-          eventKind: event.kind,
-          messageType: 'question',
-          sessionId: sessionId
-        }
+        messageMetadata
       );
       if (!userMessageRecord) {
         logger.error('Failed to persist user message, aborting processing');
@@ -641,6 +710,28 @@ export class NostrBot {
         logger.info(`[No Session] Retrieved ${conversationHistory.length} messages from ALL conversations for ${event.pubkey.substring(0, 8)}...`);
       }
 
+      // Use user metadata fetched at the beginning of processMessage (for kind 4 DMs)
+      let userContext = null;
+      if (userMetadata) {
+        userContext = {
+          name: userMetadata.name || userMetadata.displayName || 'User',
+          about: userMetadata.about || null,
+          nip05: userMetadata.nip05 || null
+        };
+        logger.info(`👤 User context: ${userContext.name}${userContext.nip05 ? ' (' + userContext.nip05 + ')' : ''}`);
+      } else if (conversationHistory.length > 0) {
+        // Fallback: Try to extract from conversation history if not fetched
+        const firstMessage = conversationHistory[0];
+        if (firstMessage.userMetadata) {
+          userContext = {
+            name: firstMessage.userMetadata.name || firstMessage.userMetadata.displayName || 'User',
+            about: firstMessage.userMetadata.about || null,
+            nip05: firstMessage.userMetadata.nip05 || null
+          };
+          logger.info(`👤 User context (from history): ${userContext.name}${userContext.nip05 ? ' (' + userContext.nip05 + ')' : ''}`);
+        }
+      }
+
       // Log the conversation history being sent to AI
       if (conversationHistory.length > 0) {
         logger.info(`📝 History being sent to AI (${conversationHistory.length} messages):`);
@@ -653,7 +744,7 @@ export class NostrBot {
       }
 
       // Generate AI response using Gemini (with circuit breaker protection)
-      const response = await this.gemini.generateResponse(messageContent, conversationHistory);
+      const response = await this.gemini.generateResponse(messageContent, conversationHistory, userContext);
 
       // Add delay to seem more natural
       await this.sleep(this.config.responseDelay);

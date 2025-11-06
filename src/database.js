@@ -160,6 +160,7 @@ export class Database {
       replyTo: metadata.replyTo || null,
       eventId: metadata.eventId || null,
       eventKind: metadata.eventKind || null,
+      userMetadata: metadata.userMetadata || null, // Store user metadata from relay
     };
 
     const messagesKey = `session:messages:${normalizedPubkey}:${sessionId}`;
