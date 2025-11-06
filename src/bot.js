@@ -353,6 +353,93 @@ export class NostrBot {
   }
 
   /**
+   * Calculate Levenshtein distance between two strings (for fuzzy matching)
+   */
+  levenshteinDistance(str1, str2) {
+    const len1 = str1.length;
+    const len2 = str2.length;
+    const matrix = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
+    
+    for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+    for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+    
+    for (let i = 1; i <= len1; i++) {
+      for (let j = 1; j <= len2; j++) {
+        const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,      // deletion
+          matrix[i][j - 1] + 1,      // insertion
+          matrix[i - 1][j - 1] + cost // substitution
+        );
+      }
+    }
+    
+    return matrix[len1][len2];
+  }
+
+  /**
+   * Check if message is a balance inquiry with intelligent fuzzy matching
+   */
+  isBalanceRequest(message) {
+    if (!message || typeof message !== 'string') return false;
+    
+    const normalizedMsg = message.toLowerCase().trim();
+    
+    // Target words to match (with typo tolerance)
+    const targetWords = ['balance', 'credit', 'wallet', 'sats'];
+    
+    // Split message into words
+    const words = normalizedMsg.split(/\s+/);
+    
+    // Check each word for fuzzy match with target words
+    for (const word of words) {
+      // Skip very short words
+      if (word.length < 3) continue;
+      
+      for (const target of targetWords) {
+        const distance = this.levenshteinDistance(word, target);
+        const maxDistance = Math.floor(target.length * 0.3); // Allow 30% character difference
+        
+        if (distance <= maxDistance) {
+          // Found a close match, check context
+          if (normalizedMsg.includes('my') || 
+              normalizedMsg.includes('check') || 
+              normalizedMsg.includes('show') ||
+              normalizedMsg.includes('what') ||
+              normalizedMsg.includes('how much') ||
+              normalizedMsg.includes('how many') ||
+              normalizedMsg.match(/\?$/)) {
+            return true;
+          }
+          // Single word queries
+          if (words.length === 1 && distance <= 1) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    // Extended pattern matching (very flexible)
+    const patterns = [
+      /balanc?e?/i,                          // balance, balanc, balane, etc.
+      /what.*my/i,                           // "what ... my"
+      /how\s+(much|many)/i,                  // "how much" or "how many"
+      /check.*my/i,                          // "check my ..."
+      /show.*my/i,                           // "show my ..."
+      /my.*(credit|wallet|account)/i,        // "my credit/wallet/account"
+      /^(cr[eai]dit|wall[eai]t|sats?)\??$/i // Single word with typos
+    ];
+    
+    for (const pattern of patterns) {
+      if (pattern.test(normalizedMsg)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
    * Process a message (called by queue)
    */
   async processMessage(event, relayUrl) {
@@ -443,9 +530,43 @@ export class NostrBot {
       }
 
       // =============================================
+      // CHECK IF MESSAGE IS A BALANCE REQUEST
+      // =============================================
+      if (this.isBalanceRequest(messageContent)) {
+        logger.info(`Balance request detected from ${event.pubkey.substring(0, 8)}...`);
+        
+        const currentBalance = await this.zapDb.getBalance(event.pubkey);
+        const balanceMessage = `💰 Your current balance: ${currentBalance} sats\n\n` +
+          `💸 Cost per message:\n` +
+          `  • DM (Direct Message): 1 sat\n` +
+          `  • Public mention/reply: 2 sats\n\n` +
+          `⚡ Send a Zap to top up your balance!`;
+        
+        if (event.kind === 4) {
+          await this.sendDM(event.pubkey, balanceMessage, sessionId);
+        } else if (event.kind === 1) {
+          await this.sendReply(event, balanceMessage);
+        }
+
+        await this.db.saveMessage(
+          event.pubkey,
+          balanceMessage,
+          true,
+          {
+            eventKind: event.kind,
+            messageType: 'balance_info',
+            sessionId: sessionId,
+          }
+        );
+
+        logger.info(`✓ Balance info sent to ${event.pubkey.substring(0, 8)}... (${currentBalance} sats)`);
+        return; // Don't process further or deduct balance
+      }
+
+      // =============================================
       // CHECK BALANCE AND DEDUCT BEFORE GENERATING RESPONSE
       // =============================================
-      const cost = event.kind === 4 ? 20 : 50;
+      const cost = event.kind === 4 ? 1 : 2; // DM: 1 sat, Public: 2 sats 
       const currentBalance = await this.zapDb.getBalance(event.pubkey);
       
       logger.info(`User ${event.pubkey.substring(0, 8)}... balance: ${currentBalance} sats, required: ${cost} sats`);
