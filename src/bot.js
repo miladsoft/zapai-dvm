@@ -679,6 +679,9 @@ export class NostrBot {
           `  • DM (Direct Message): 1 sat\n` +
           `  • Public mention/reply: 2 sats\n\n` +
           `⚡ Send a Zap to top up your balance!`;
+
+        // Also publish balance to relays (kind 1006) so clients can track it in real-time
+        await this.publishBalanceResponse(event.pubkey, currentBalance);
         
         if (event.kind === 4) {
           await this.sendDM(event.pubkey, balanceMessage, sessionId);
@@ -733,6 +736,9 @@ export class NostrBot {
             sessionId: sessionId,
           }
         );
+
+        // Publish current balance to relays as well (so clients see the up-to-date value)
+        await this.publishBalanceResponse(event.pubkey, currentBalance);
         
         return; // Stop processing
       }
@@ -760,6 +766,9 @@ export class NostrBot {
             sessionId: sessionId,
           }
         );
+
+        // Publish unchanged balance (best-effort) so clients remain consistent
+        await this.publishBalanceResponse(event.pubkey, currentBalance);
         
         return;
       }
