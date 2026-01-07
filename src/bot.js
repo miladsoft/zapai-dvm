@@ -69,6 +69,21 @@ export class NostrBot {
     this.failedRelays = new Set();
     this.maxReconnectAttempts = 5; // Maximum reconnection attempts per relay
     this.reconnectAttempts = new Map(); // Track attempts per relay
+
+    // Relay publishing timeout (prevents hung relay publishes from stalling processing)
+    this.relayPublishTimeoutMs = Number.isFinite(config.relayPublishTimeoutMs)
+      ? config.relayPublishTimeoutMs
+      : 8000;
+  }
+
+  _withTimeout(promise, ms, label = 'operation') {
+    if (!ms || ms <= 0) return promise;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+      ),
+    ]);
   }
 
   /**
@@ -915,7 +930,11 @@ export class NostrBot {
 
       // Publish to all relays (ignore individual failures)
       const publishPromises = this.relays.map(({ relay, url }) => {
-        return relay.event(signedEvent)
+        return this._withTimeout(
+          relay.event(signedEvent),
+          this.relayPublishTimeoutMs,
+          `Publish DM to ${url}`
+        )
           .then(() => {
             logger.debug(`✓ Published to ${url}`);
             return { url, success: true };
@@ -989,7 +1008,11 @@ export class NostrBot {
 
       // Publish to all relays
       const publishPromises = this.relays.map(({ relay, url }) => {
-        return relay.event(signedEvent)
+        return this._withTimeout(
+          relay.event(signedEvent),
+          this.relayPublishTimeoutMs,
+          `Publish reply to ${url}`
+        )
           .then(() => {
             logger.debug(`✓ Published reply to ${url}`);
             return { url, success: true };
@@ -1227,9 +1250,16 @@ export class NostrBot {
 
       // Publish to all relays
       const publishPromises = this.relays.map(({ relay, url }) => {
-        return relay.event(signedEvent).catch(error => {
-          logger.debug(`Failed to publish balance update to ${url}: ${error.message}`);
-        });
+        return this._withTimeout(
+          relay.event(signedEvent),
+          this.relayPublishTimeoutMs,
+          `Publish balance update to ${url}`
+        )
+          .then(() => ({ url, success: true }))
+          .catch(error => {
+            logger.debug(`Failed to publish balance update to ${url}: ${error.message}`);
+            return { url, success: false };
+          });
       });
 
       await Promise.allSettled(publishPromises);
@@ -1267,7 +1297,11 @@ export class NostrBot {
 
       // Publish to all relays
       const publishPromises = this.relays.map(({ relay, url }) => {
-        return relay.event(signedEvent)
+        return this._withTimeout(
+          relay.event(signedEvent),
+          this.relayPublishTimeoutMs,
+          `Publish balance response to ${url}`
+        )
           .then(() => {
             logger.debug(`✓ Balance response (kind 1006) published to ${url}`);
             return { url, success: true };

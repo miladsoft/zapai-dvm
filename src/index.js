@@ -42,6 +42,11 @@ const bot = new NostrBot({
   userMetadataFastTimeoutMs: Number.isFinite(parseInt(process.env.USER_METADATA_FAST_TIMEOUT_MS))
     ? parseInt(process.env.USER_METADATA_FAST_TIMEOUT_MS)
     : 300,
+
+  // Relay publish timeout (ms) to avoid hanging on slow relays
+  relayPublishTimeoutMs: Number.isFinite(parseInt(process.env.RELAY_PUBLISH_TIMEOUT_MS))
+    ? parseInt(process.env.RELAY_PUBLISH_TIMEOUT_MS)
+    : 8000,
   
   // Queue configuration
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 10,

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   zapai-bot:
     build:
@@ -8,22 +6,28 @@ services:
     container_name: zapai-dvm
     restart: unless-stopped
     user: "1000:1000"
+
+    # Always load env vars from local .env (prevents "variable is not set" warnings)
+    env_file:
+      - .env
     
     # Environment variables
     environment:
-      - BOT_PRIVATE_KEY=${BOT_PRIVATE_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
-      - BOT_NAME=${BOT_NAME:-ZapAI}
-      - NOSTR_RELAYS=${NOSTR_RELAYS}
-      - BOT_RESPONSE_DELAY=${BOT_RESPONSE_DELAY:-2000}
-      - WEB_PORT=${WEB_PORT:-3000}
-      - MAX_CONCURRENT=${MAX_CONCURRENT:-10}
-      - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-10000}
-      - RATE_LIMIT_MAX_TOKENS=${RATE_LIMIT_MAX_TOKENS:-50}
-      - RATE_LIMIT_REFILL_RATE=${RATE_LIMIT_REFILL_RATE:-5}
-      - QUEUE_TIMEOUT=${QUEUE_TIMEOUT:-60000}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
+      BOT_NAME: ${BOT_NAME:-ZapAI}
+      NOSTR_RELAYS: ${NOSTR_RELAYS}
+      # Default 0 for fastest responses; override in .env if desired
+      BOT_RESPONSE_DELAY: ${BOT_RESPONSE_DELAY:-0}
+      WEB_PORT: ${WEB_PORT:-3000}
+
+      # Scalability
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-10}
+      MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-10000}
+      RATE_LIMIT_MAX_TOKENS: ${RATE_LIMIT_MAX_TOKENS:-50}
+      RATE_LIMIT_REFILL_RATE: ${RATE_LIMIT_REFILL_RATE:-5}
+      QUEUE_TIMEOUT: ${QUEUE_TIMEOUT:-60000}
+
+      # Optional auth
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
     
     # Port mapping
     ports:
