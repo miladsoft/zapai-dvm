@@ -15,8 +15,13 @@ if (typeof global.WebSocket === 'undefined') {
 }
 
 // Validate environment variables
-const requiredEnvVars = ['BOT_PRIVATE_KEY', 'GEMINI_API_KEY'];
-const missing = requiredEnvVars.filter(v => !process.env[v]);
+// NOTE: Gemini key may be provided either as GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY
+// (the latter is used by newer Google AI SDK setups).
+const missing = [];
+if (!process.env.BOT_PRIVATE_KEY) missing.push('BOT_PRIVATE_KEY');
+if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+  missing.push('GEMINI_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY)');
+}
 
 if (missing.length > 0) {
   logger.error(`Missing required environment variables: ${missing.join(', ')}`);
