@@ -21,9 +21,19 @@ export class NostrBot {
     this.controllers = [];
     this.db = new Database('./data/conversations');
     this.zapDb = new ZapDatabase('./data/zaps');
+
+    // User metadata cache (avoid slow relay fetch on every DM)
+    this.userMetadataCache = new Map(); // pubkey -> { data, fetchedAt }
+    this.userMetadataInFlight = new Map(); // pubkey -> Promise
+    this.userMetadataCacheTtlMs = Number.isFinite(config.userMetadataCacheTtlMs)
+      ? config.userMetadataCacheTtlMs
+      : 6 * 60 * 60 * 1000; // 6h
+    this.userMetadataFastTimeoutMs = Number.isFinite(config.userMetadataFastTimeoutMs)
+      ? config.userMetadataFastTimeoutMs
+      : 300; // return quickly; fetch continues in background
     
     // Initialize Gemini AI
-    this.gemini = new GeminiAI(config.geminiApiKey, config.botName);
+    this.gemini = new GeminiAI(config.geminiApiKey, config.botName, config.geminiOptions || {});
     
     // Initialize message queue
     this.queue = new MessageQueue({
@@ -497,6 +507,55 @@ export class NostrBot {
   }
 
   /**
+   * Get cached metadata if fresh.
+   */
+  getCachedUserMetadata(pubkey) {
+    const entry = this.userMetadataCache.get(pubkey);
+    if (!entry) return null;
+    if (Date.now() - entry.fetchedAt > this.userMetadataCacheTtlMs) {
+      this.userMetadataCache.delete(pubkey);
+      return null;
+    }
+    return entry.data;
+  }
+
+  /**
+   * Get user metadata with a fast timeout.
+   * - If cached: returns immediately.
+   * - If not cached: kicks off background fetch; returns null quickly if it takes too long.
+   */
+  async getUserMetadataFast(pubkey) {
+    const cached = this.getCachedUserMetadata(pubkey);
+    if (cached) return cached;
+
+    // Deduplicate concurrent fetches per pubkey
+    let inFlight = this.userMetadataInFlight.get(pubkey);
+    if (!inFlight) {
+      inFlight = (async () => {
+        try {
+          const meta = await this.fetchUserMetadata(pubkey);
+          if (meta) {
+            this.userMetadataCache.set(pubkey, { data: meta, fetchedAt: Date.now() });
+          }
+          return meta;
+        } finally {
+          this.userMetadataInFlight.delete(pubkey);
+        }
+      })();
+      // Ensure background errors don't become unhandled
+      inFlight.catch(() => null);
+      this.userMetadataInFlight.set(pubkey, inFlight);
+    }
+
+    // Return quickly for responsiveness; background fetch will warm cache.
+    const timeoutMs = this.userMetadataFastTimeoutMs;
+    return await Promise.race([
+      inFlight,
+      new Promise(resolve => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+  }
+
+  /**
    * Process a message (called by queue)
    */
   async processMessage(event, relayUrl) {
@@ -504,6 +563,7 @@ export class NostrBot {
       let messageContent;
       let sessionId = null;
       let userMetadata = null;
+      let userMetadataPromise = null;
       
       // Extract session ID from tags (for kind 4 DMs)
       if (event.kind === 4) {
@@ -515,8 +575,8 @@ export class NostrBot {
           logger.warn(`DM from ${event.pubkey.substring(0, 8)}... received without session tag - creating new conversation`);
         }
         
-        // Fetch user metadata from relay (only for kind 4 DMs)
-        userMetadata = await this.fetchUserMetadata(event.pubkey);
+        // Fetch user metadata with cache + fast timeout (only for kind 4 DMs)
+        userMetadataPromise = this.getUserMetadataFast(event.pubkey);
       }
       
       // Handle different event kinds
@@ -540,6 +600,15 @@ export class NostrBot {
       if (!messageContent || messageContent.trim().length === 0) {
         logger.warn('Received empty message - skipping response');
         return;
+      }
+
+      // Resolve user metadata if available (do not block long)
+      if (userMetadataPromise) {
+        try {
+          userMetadata = await userMetadataPromise;
+        } catch {
+          userMetadata = null;
+        }
       }
 
       // Create message fingerprint based on actual content
@@ -732,22 +801,24 @@ export class NostrBot {
         }
       }
 
-      // Log the conversation history being sent to AI
+      // Avoid expensive/verbose logs in production; enable via DEBUG=true
       if (conversationHistory.length > 0) {
-        logger.info(`📝 History being sent to AI (${conversationHistory.length} messages):`);
-        conversationHistory.forEach((msg, index) => {
-          const preview = msg.message.substring(0, 60).replace(/\n/g, ' ');
-          logger.info(`  [${index + 1}] ${msg.isFromBot ? 'BOT' : 'USER'}: "${preview}${msg.message.length > 60 ? '...' : ''}"`);
-        });
+        logger.debug(`History being sent to AI (${conversationHistory.length} messages)`);
       } else {
-        logger.warn(`⚠️  No history found! Sending empty history to AI.`);
+        logger.debug('No history found; sending empty history to AI');
       }
 
       // Generate AI response using Gemini (with circuit breaker protection)
-      const response = await this.gemini.generateResponse(messageContent, conversationHistory, userContext);
+      // For DMs with a sessionId, reuse a per-session chat to reduce latency and token usage.
+      const geminiOptions = (event.kind === 4 && sessionId)
+        ? { conversationKey: `${event.pubkey}:${sessionId}` }
+        : {};
+      const response = await this.gemini.generateResponse(messageContent, conversationHistory, userContext, geminiOptions);
 
-      // Add delay to seem more natural
-      await this.sleep(this.config.responseDelay);
+      // Optional delay (defaults to 0 for snappier UX)
+      if (Number.isFinite(this.config.responseDelay) && this.config.responseDelay > 0) {
+        await this.sleep(this.config.responseDelay);
+      }
 
       // Send response based on event kind
       let responseEventId = null;

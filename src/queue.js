@@ -23,6 +23,7 @@ export class MessageQueue {
     };
     
     this.isRunning = false;
+    this._drainScheduled = false;
   }
 
   /**
@@ -51,6 +52,9 @@ export class MessageQueue {
       this.start();
     }
 
+    // Trigger processing immediately (event-driven, no polling)
+    this._wake();
+
     return queueItem.id;
   }
 
@@ -62,49 +66,35 @@ export class MessageQueue {
     
     this.isRunning = true;
     logger.info('Message queue started');
-    
-    // Process messages continuously
-    this.processNext();
+
+    // Process messages (event-driven)
+    this._wake();
   }
 
-  /**
-   * Process next message in queue
-   */
-  async processNext() {
+  _wake() {
+    if (!this.isRunning) return;
+    if (this._drainScheduled) return;
+    this._drainScheduled = true;
+    setImmediate(() => {
+      this._drainScheduled = false;
+      this._drain();
+    });
+  }
+
+  async _drain() {
     if (!this.isRunning) return;
 
-    // Check if we can process more messages
-    if (this.processing.size >= this.maxConcurrent) {
-      // Check again in 100ms
-      setTimeout(() => this.processNext(), 100);
-      return;
-    }
+    while (this.isRunning && this.processing.size < this.maxConcurrent && this.queue.length > 0) {
+      const queueItem = this.queue.shift();
+      if (!queueItem) break;
 
-    // Get next message from queue
-    const queueItem = this.queue.shift();
-    
-    if (!queueItem) {
-      // No messages, check again in 100ms
-      setTimeout(() => this.processNext(), 100);
-      return;
-    }
+      this.processing.add(queueItem.id);
 
-    // Add to processing set
-    this.processing.add(queueItem.id);
-
-    // Process the message
-    this.processMessage(queueItem)
-      .finally(() => {
-        // Remove from processing set
-        this.processing.delete(queueItem.id);
-        
-        // Process next message
-        this.processNext();
-      });
-
-    // Continue processing more messages if capacity available
-    if (this.processing.size < this.maxConcurrent) {
-      setImmediate(() => this.processNext());
+      this.processMessage(queueItem)
+        .finally(() => {
+          this.processing.delete(queueItem.id);
+          this._wake();
+        });
     }
   }
 
