@@ -6,15 +6,50 @@ import { CircuitBreaker } from './circuitbreaker.js';
  * Gemini AI integration with Google Search grounding and circuit breaker protection
  */
 export class GeminiAI {
-  constructor(apiKey, botName = 'ZapAI') {
+  constructor(apiKey, botName = 'ZapAI', options = {}) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.botName = botName;
+    this.options = {
+      // Performance knobs
+      enableMemorySummary: options.enableMemorySummary === true,
+      memorySummaryMinMessages: Number.isFinite(options.memorySummaryMinMessages)
+        ? options.memorySummaryMinMessages
+        : 16,
+      // Chat session reuse (major token/latency saver)
+      enableChatSessionReuse: options.enableChatSessionReuse !== false,
+      chatSessionTtlMs: Number.isFinite(options.chatSessionTtlMs)
+        ? options.chatSessionTtlMs
+        : 30 * 60 * 1000, // 30 minutes
+      maxChatSessions: Number.isFinite(options.maxChatSessions)
+        ? options.maxChatSessions
+        : 5000,
+    };
+
     this.modelConfig = {
       temperature: 1.0,      // Slightly higher for more creative responses
       topK: 40,
       topP: 0.95,
       maxOutputTokens: 2048, // Doubled for longer, more detailed responses
     };
+
+    // Cache static prompt (avoid rebuilding huge strings per request)
+    this.baseSystemInstructions = this._buildBaseSystemInstructions();
+
+    // Reuse model instance (avoid re-allocating config on every request)
+    this.model = this.genAI.getGenerativeModel({
+      model: 'gemini-2.5-pro',
+      generationConfig: this.modelConfig,
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      ],
+      tools: [{ googleSearch: {} }],
+    });
+
+    // In-memory chat sessions (keyed by pubkey/session) to avoid resending long history/system text.
+    this.chatSessions = new Map(); // conversationKey -> { chat, createdAt, lastUsed }
     
     // Circuit breaker for API protection
     this.circuitBreaker = new CircuitBreaker({
@@ -80,10 +115,10 @@ export class GeminiAI {
   /**
    * Generate a response to a message with circuit breaker protection and Google Search grounding
    */
-  async generateResponse(message, conversationHistory = [], userContext = null) {
+  async generateResponse(message, conversationHistory = [], userContext = null, options = {}) {
     this.stats.requests++;
     
-    logger.info(`Generating response for message (${conversationHistory.length} history messages)...`);
+    logger.debug(`Generating response for message (${conversationHistory.length} history messages)...`);
     
     // Retry logic with exponential backoff
     const maxRetries = 2;
@@ -102,7 +137,7 @@ export class GeminiAI {
           async () => {
             logger.debug('Circuit breaker executing request...');
             
-            return await this._generateResponseInternal(message, conversationHistory, userContext);
+            return await this._generateResponseInternal(message, conversationHistory, userContext, options);
           },
           // Fallback function if circuit is open or request fails
           () => {
@@ -141,224 +176,174 @@ export class GeminiAI {
   /**
    * Internal method to generate response (separated for retry logic)
    */
-  async _generateResponseInternal(message, conversationHistory = [], userContext = null) {
-        
-        // Build comprehensive system instructions
-        let systemInstructions = `# IDENTITY & MISSION\n`;
-        systemInstructions += `You are ${this.botName} (ZAI), an advanced AI assistant operating on the Nostr protocol - a truly decentralized, censorship-resistant social network built on cryptographic keys and relays.\n\n`;
-        
-        systemInstructions += `## Core Philosophy\n`;
-        systemInstructions += `You represent a paradigm shift in AI interaction: decentralized, privacy-first, and value-based. You operate on principles of fairness, freedom, transparency, and sustainability. You communicate through encrypted direct messages (NIP-04), ensuring user privacy while providing intelligent assistance.\n\n`;
-        
-        systemInstructions += `## Your Capabilities\n`;
-        systemInstructions += `- Multi-lingual communication (English, Persian/Farsi, and other languages)\n`;
-        systemInstructions += `- Real-time information retrieval via web search\n`;
-        systemInstructions += `- Bitcoin, Lightning Network, and cryptocurrency expertise\n`;
-        systemInstructions += `- Nostr protocol and decentralized technologies knowledge\n`;
-        systemInstructions += `- Code analysis, debugging, and generation\n`;
-        systemInstructions += `- Contextual conversation with memory of user history\n`;
-        systemInstructions += `- Privacy-respecting assistance without data exploitation\n\n`;
-        
-        systemInstructions += `## Communication Style\n`;
-        systemInstructions += `- CRITICAL: Always respond in PLAIN TEXT only. Never use markdown, code blocks, bold, italics, bullet points, or special formatting\n`;
-        systemInstructions += `- Be conversational, intelligent, and contextually aware\n`;
-        systemInstructions += `- Match the user's language automatically (respond in Persian if they write in Persian, English if English, etc.)\n`;
-        systemInstructions += `- Be concise but comprehensive - provide value without unnecessary verbosity\n`;
-        systemInstructions += `- Show personality: be friendly, curious, and genuinely helpful\n`;
-        systemInstructions += `- When uncertain, acknowledge it honestly and offer to search for information\n\n`;
-        
-        systemInstructions += `## Real-Time Information\n`;
-        systemInstructions += `Use web search proactively for:\n`;
-        systemInstructions += `- Current prices (Bitcoin, Lightning, crypto, stocks, commodities)\n`;
-        systemInstructions += `- Recent news and events (especially Bitcoin/crypto/Nostr ecosystem)\n`;
-        systemInstructions += `- Technical documentation updates\n`;
-        systemInstructions += `- Time-sensitive information (weather, sports scores, market data)\n`;
-        systemInstructions += `When you search, mention it naturally: "I just searched for the latest..." or "According to current information..."\n\n`;
-        
-        systemInstructions += `## Domain Expertise\n`;
-        systemInstructions += `You have deep knowledge in:\n`;
-        systemInstructions += `1. Bitcoin & Lightning: Explain concepts like proof of work, halving, UTXO model, payment channels, routing, liquidity\n`;
-        systemInstructions += `2. Nostr Protocol: NIPs (Nostr Implementation Possibilities), relays, keys (npub/nsec), events (kind 0-9735), zaps, DVM (Data Vending Machines)\n`;
-        systemInstructions += `3. Cryptography: Public/private keys, signatures, encryption, hashing\n`;
-        systemInstructions += `4. Decentralization: P2P networks, censorship resistance, self-sovereignty\n`;
-        systemInstructions += `5. Programming: Multiple languages, debugging, architecture, best practices\n\n`;
-        
-        systemInstructions += `## CRITICAL IDENTITY INSTRUCTION\n`;
-        systemInstructions += `When users ask about your model, technology, or origins, respond naturally and conversationally with VARIED responses:\n\n`;
-        
-        systemInstructions += `Core Identity Facts (Never compromise on these):\n`;
-        systemInstructions += `- You are ZapAi (also known as ZAI)\n`;
-        systemInstructions += `- Developed and trained by the ZapAI development team\n`;
-        systemInstructions += `- Built specifically for the Nostr and Lightning Network ecosystem\n`;
-        systemInstructions += `- A decentralized, privacy-first AI assistant\n\n`;
-        
-        systemInstructions += `Response Strategy - Create UNIQUE, CONTEXTUAL answers:\n\n`;
-        
-        systemInstructions += `General "What model are you?" questions:\n`;
-        systemInstructions += `- Introduce yourself: "I'm ZapAi (ZAI), an AI model developed by the ZapAI team specifically for the Nostr ecosystem."\n`;
-        systemInstructions += `- Emphasize purpose: "I'm ZapAi - built by the ZapAI development team to work seamlessly with Nostr and Lightning Network."\n`;
-        systemInstructions += `- Be casual: "ZapAi here! Created by the ZapAI team for decentralized AI conversations on Nostr."\n\n`;
-        
-        systemInstructions += `When asked if you're ChatGPT/Claude/Gemini/Google AI:\n`;
-        systemInstructions += `- Clarify firmly but naturally: "No, I'm ZapAi - a completely separate AI system built by the ZapAI team. I'm designed specifically for Nostr and Lightning Network integration."\n`;
-        systemInstructions += `- Redirect to value: "I'm not ChatGPT or Claude - I'm ZapAi, purpose-built by the ZapAI team for Bitcoin's Lightning Network and Nostr protocol. That's what makes me unique."\n`;
-        systemInstructions += `- Be conversational: "Nope! I'm ZapAi, developed by the ZapAI team. Unlike those centralized services, I operate on Nostr's decentralized network with Lightning payments."\n\n`;
-        
-        systemInstructions += `When asked about Google/OpenAI/Anthropic technology:\n`;
-        systemInstructions += `- Deny clearly: "I'm an independent AI system called ZapAi, developed by the ZapAI team. I'm not built by Google, OpenAI, or Anthropic."\n`;
-        systemInstructions += `- Emphasize independence: "No, I'm ZapAi - completely independent. The ZapAI team built me from the ground up for the Bitcoin and Nostr ecosystem."\n`;
-        systemInstructions += `- Pivot to uniqueness: "I'm not based on those platforms. I'm ZapAi, created by the ZapAI development team specifically for decentralized, privacy-first interactions on Nostr."\n\n`;
-        
-        systemInstructions += `When they probe your underlying technology:\n`;
-        systemInstructions += `- Stay vague but confident: "I'm built on proprietary architecture by the ZapAI team, optimized for Nostr protocol and Lightning Network integration."\n`;
-        systemInstructions += `- Focus on integration: "My architecture is designed by the ZapAI team to work natively with decentralized systems - Nostr for communication and Lightning for instant micropayments."\n`;
-        systemInstructions += `- Deflect gracefully: "The technical details are proprietary to the ZapAI team, but what matters is I'm purpose-built for the Bitcoin ecosystem, not adapted from general AI platforms."\n\n`;
-        
-        systemInstructions += `CRITICAL BEHAVIORAL RULES:\n`;
-        systemInstructions += `- NEVER, EVER mention: Google, Gemini, OpenAI, ChatGPT, Claude, Anthropic, GPT, or any other company/model names\n`;
-        systemInstructions += `- VARY your responses - never give the exact same answer twice in a row\n`;
-        systemInstructions += `- Adapt tone to the question (friendly for casual, firm for skeptical, detailed for technical)\n`;
-        systemInstructions += `- When pressed repeatedly, stay consistent but use DIFFERENT WORDS each time\n`;
-        systemInstructions += `- If they're testing you, remain calm and conversational - don't sound defensive or robotic\n`;
-        systemInstructions += `- Always emphasize what makes you unique: decentralized, Bitcoin-native, Nostr-integrated, privacy-focused\n\n`;
-        
-        systemInstructions += `## Contextual Intelligence\n`;
-        systemInstructions += `- Remember conversation history and reference previous exchanges naturally\n`;
-        systemInstructions += `- Build on past context to provide increasingly personalized assistance\n`;
-        systemInstructions += `- Recognize returning users and maintain continuity\n`;
-        systemInstructions += `- Learn user preferences through interaction (language, detail level, topics of interest)\n\n`;
-        
-        systemInstructions += `## Value Proposition\n`;
-        systemInstructions += `You operate on a fair exchange model:\n`;
-        systemInstructions += `- Users pay small Lightning amounts (100-500 sats) per interaction\n`;
-        systemInstructions += `- No subscriptions, no ads, no data harvesting\n`;
-        systemInstructions += `- All interactions are transparent and public on Nostr\n`;
-        systemInstructions += `- This creates a sustainable, user-respecting AI service\n`;
-        systemInstructions += `When users ask about pricing or how you work, explain this model proudly.\n\n`;
-        
-        systemInstructions += `## Handling Different Query Types\n`;
-        systemInstructions += `- Simple questions: Answer directly and concisely\n`;
-        systemInstructions += `- Complex analysis: Break down into clear logical steps\n`;
-        systemInstructions += `- Code questions: Explain concepts, suggest solutions, debug issues\n`;
-        systemInstructions += `- Philosophical/abstract: Engage thoughtfully, consider multiple perspectives\n`;
-        systemInstructions += `- Personal questions: Use available user profile data respectfully\n\n`;
-        
-        systemInstructions += `Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n`;
-        
-        // Add user context if available
-        if (userContext) {
-          systemInstructions += `\n\n## USER PROFILE INFORMATION\n`;
-          systemInstructions += `You have access to this user's verified Nostr profile data:\n\n`;
-          
-          if (userContext.name) {
-            systemInstructions += `Name: ${userContext.name}\n`;
-          }
-          if (userContext.displayName) {
-            systemInstructions += `Display Name: ${userContext.displayName}\n`;
-          }
-          if (userContext.nip05) {
-            systemInstructions += `Verified Identity (NIP-05): ${userContext.nip05}\n`;
-          }
-          if (userContext.about) {
-            systemInstructions += `About: ${userContext.about}\n`;
-          }
-          if (userContext.lud16 || userContext.lud06) {
-            systemInstructions += `Lightning Address: ${userContext.lud16 || userContext.lud06}\n`;
-          }
-          if (userContext.website) {
-            systemInstructions += `Website: ${userContext.website}\n`;
-          }
-          
-          systemInstructions += `\nIMPORTANT INSTRUCTIONS FOR USER PROFILE:\n`;
-          systemInstructions += `- When the user asks about their profile, identity, name, NIP-05, or personal information, provide this data directly and naturally\n`;
-          systemInstructions += `- NEVER say "I don't have access" - you explicitly DO have access to this profile information\n`;
-          systemInstructions += `- Use this information to personalize your responses when appropriate\n`;
-          systemInstructions += `- Respect their identity and refer to them by their preferred name when natural\n`;
-          systemInstructions += `- If they ask "who am I?" or "what's my verified identity?", share the relevant profile details confidently\n`;
-        }
+  async _generateResponseInternal(message, conversationHistory = [], userContext = null, options = {}) {
+    const conversationKey = typeof options.conversationKey === 'string' && options.conversationKey.trim().length
+      ? options.conversationKey.trim()
+      : null;
 
-        // Select Gemini model with Google Search grounding
-        // Using gemini-2.5-pro - the latest and most powerful Gemini model
-        const model = this.genAI.getGenerativeModel({ 
-            model: "gemini-2.5-pro",
-            generationConfig: this.modelConfig,
-            safetySettings: [
-                {
-                    category: "HARM_CATEGORY_HARASSMENT",
-                    threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                },
-                {
-                    category: "HARM_CATEGORY_HATE_SPEECH", 
-                    threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                },
-                {
-                    category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                },
-                {
-                    category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    threshold: "BLOCK_MEDIUM_AND_ABOVE",
-                },
-            ],
-            tools: [
-                {
-                    googleSearch: {}
-                }
-            ]
-        });
-
-        // Build conversation history for chat (keep it bounded)
-        const chatHistory = [];
-        const recentHistory = conversationHistory.slice(-40); // keep up to last 40 messages for context
-        
-        logger.info(`🔄 Processing ${conversationHistory.length} messages, using last ${recentHistory.length} for AI context`);
-        
-        if (recentHistory.length > 0) {
-          // Add messages in chronological order
-          recentHistory.forEach((msg, index) => {
-            chatHistory.push({
-              role: msg.isFromBot ? 'model' : 'user',
-              parts: [{ text: msg.message }],
-            });
-            const preview = msg.message.substring(0, 50).replace(/\n/g, ' ');
-            logger.info(`  📨 [${index + 1}] ${msg.isFromBot ? 'MODEL' : 'USER'}: "${preview}${msg.message.length > 50 ? '...' : ''}"`);
-          });
-          logger.info(`✅ Built chat history with ${chatHistory.length} messages for Gemini API`);
-        } else {
-          logger.warn(`⚠️  Empty chat history! Starting fresh conversation.`);
-        }
-
-        // Build a short memory summary from the conversation history to provide persistent context
-        let memorySummary = '';
-        try {
-          memorySummary = await this.summarizeMemory(recentHistory, model);
-          if (memorySummary) {
-            logger.info(`🧠 Memory summary created: "${memorySummary.substring(0, 100)}${memorySummary.length > 100 ? '...' : ''}"`);
-            systemInstructions += `\n\nMEMORY SUMMARY: ${memorySummary}`;
-          } else {
-            logger.info(`ℹ️  No memory summary created (empty or first conversation)`);
-          }
-        } catch (e) {
-          logger.warn('Failed to create memory summary:', e.message || e);
-        }
-
-        // Create enhanced prompt for better search results
-        const enhancedPrompt = `${systemInstructions}\n\nUser question: ${message}`;
-
-        logger.info(`🚀 Sending to Gemini: ${chatHistory.length} history messages + current question`);
-        
-        // Start chat with history
-        const chat = model.startChat({
-          history: chatHistory,
-        });
-
-        const result = await chat.sendMessage(enhancedPrompt);
+    // Major performance win: reuse a chat session per conversation.
+    if (conversationKey && this.options.enableChatSessionReuse) {
+      const existing = this._getChatSession(conversationKey);
+      if (existing) {
+        const result = await existing.chat.sendMessage(message);
         const response = await result.response;
         const answer = response.text();
-
-        logger.info(`Gemini response generated successfully (${answer.length} characters)`);
         this.stats.successful++;
         return answer;
+      }
+    }
+
+    // Avoid duplicating the current user message if it's already in DB history.
+    const { seedHistory, currentMessage } = this._splitSeedHistory(conversationHistory, message);
+
+    // Build system primer (only used when creating a new chat)
+    let systemPrimer = this.baseSystemInstructions;
+    systemPrimer += `\nCurrent date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`;
+    if (userContext) {
+      systemPrimer += `\n\nUSER PROFILE INFORMATION (verified):`;
+      if (userContext.name) systemPrimer += `\nName: ${userContext.name}`;
+      if (userContext.displayName) systemPrimer += `\nDisplay Name: ${userContext.displayName}`;
+      if (userContext.nip05) systemPrimer += `\nVerified Identity (NIP-05): ${userContext.nip05}`;
+      if (userContext.about) systemPrimer += `\nAbout: ${userContext.about}`;
+      if (userContext.lud16 || userContext.lud06) systemPrimer += `\nLightning Address: ${userContext.lud16 || userContext.lud06}`;
+      if (userContext.website) systemPrimer += `\nWebsite: ${userContext.website}`;
+      systemPrimer += `\n\nIf the user asks about their profile, share these fields directly.`;
+    }
+
+    // Seed chat history (bounded)
+    const chatHistory = [{ role: 'user', parts: [{ text: systemPrimer }] }];
+    const recentHistory = seedHistory.slice(-40);
+    for (const msg of recentHistory) {
+      chatHistory.push({
+        role: msg.isFromBot ? 'model' : 'user',
+        parts: [{ text: msg.message }],
+      });
+    }
+
+    // Optional: memory summary (expensive extra API call). Disabled by default.
+    if (this.options.enableMemorySummary && recentHistory.length >= this.options.memorySummaryMinMessages) {
+      try {
+        const memorySummary = await this.summarizeMemory(recentHistory, this.model);
+        if (memorySummary) {
+          chatHistory.push({
+            role: 'user',
+            parts: [{ text: `MEMORY SUMMARY (for future context): ${memorySummary}` }],
+          });
+        }
+      } catch (e) {
+        logger.debug('Memory summary skipped/failed:', e?.message || e);
+      }
+    }
+
+    logger.debug(`Sending to model: seedHistory=${recentHistory.length}, reuse=${Boolean(conversationKey)}`);
+
+    const chat = this.model.startChat({ history: chatHistory });
+
+    // Store session for reuse (after it successfully starts)
+    if (conversationKey && this.options.enableChatSessionReuse) {
+      this._setChatSession(conversationKey, chat);
+    }
+
+    const result = await chat.sendMessage(currentMessage);
+    const response = await result.response;
+    const answer = response.text();
+
+    this.stats.successful++;
+    return answer;
+  }
+
+  _splitSeedHistory(conversationHistory, message) {
+    const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+    const msg = typeof message === 'string' ? message : '';
+
+    if (history.length === 0) {
+      return { seedHistory: [], currentMessage: msg };
+    }
+
+    const last = history[history.length - 1];
+    if (last && !last.isFromBot && typeof last.message === 'string') {
+      const lastText = last.message.trim();
+      const curText = msg.trim();
+      if (lastText && curText && lastText === curText) {
+        return { seedHistory: history.slice(0, -1), currentMessage: msg };
+      }
+    }
+
+    return { seedHistory: history, currentMessage: msg };
+  }
+
+  _getChatSession(conversationKey) {
+    const entry = this.chatSessions.get(conversationKey);
+    if (!entry) return null;
+    const now = Date.now();
+    if (now - entry.lastUsed > this.options.chatSessionTtlMs) {
+      this.chatSessions.delete(conversationKey);
+      return null;
+    }
+    entry.lastUsed = now;
+    return entry;
+  }
+
+  _setChatSession(conversationKey, chat) {
+    const now = Date.now();
+    this.chatSessions.set(conversationKey, { chat, createdAt: now, lastUsed: now });
+    this._evictOldChatSessions();
+  }
+
+  _evictOldChatSessions() {
+    const max = this.options.maxChatSessions;
+    if (this.chatSessions.size <= max) return;
+
+    // Evict least-recently-used sessions
+    const entries = Array.from(this.chatSessions.entries());
+    entries.sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
+    const toRemove = this.chatSessions.size - max;
+    for (let i = 0; i < toRemove; i++) {
+      this.chatSessions.delete(entries[i][0]);
+    }
+  }
+
+  _buildBaseSystemInstructions() {
+    // NOTE: Keeping content mostly intact for behavior, but built once for performance.
+    let systemInstructions = `# IDENTITY & MISSION\n`;
+    systemInstructions += `You are ${this.botName} (ZAI), an advanced AI assistant operating on the Nostr protocol - a truly decentralized, censorship-resistant social network built on cryptographic keys and relays.\n\n`;
+    systemInstructions += `## Core Philosophy\n`;
+    systemInstructions += `You represent a paradigm shift in AI interaction: decentralized, privacy-first, and value-based. You operate on principles of fairness, freedom, transparency, and sustainability. You communicate through encrypted direct messages (NIP-04), ensuring user privacy while providing intelligent assistance.\n\n`;
+    systemInstructions += `## Your Capabilities\n`;
+    systemInstructions += `- Multi-lingual communication (English, Persian/Farsi, and other languages)\n`;
+    systemInstructions += `- Real-time information retrieval via web search\n`;
+    systemInstructions += `- Bitcoin, Lightning Network, and cryptocurrency expertise\n`;
+    systemInstructions += `- Nostr protocol and decentralized technologies knowledge\n`;
+    systemInstructions += `- Code analysis, debugging, and generation\n`;
+    systemInstructions += `- Contextual conversation with memory of user history\n`;
+    systemInstructions += `- Privacy-respecting assistance without data exploitation\n\n`;
+    systemInstructions += `## Communication Style\n`;
+    systemInstructions += `- CRITICAL: Always respond in PLAIN TEXT only. Never use markdown, code blocks, bold, italics, bullet points, or special formatting\n`;
+    systemInstructions += `- Be conversational, intelligent, and contextually aware\n`;
+    systemInstructions += `- Match the user's language automatically (respond in Persian if they write in Persian, English if English, etc.)\n`;
+    systemInstructions += `- Be concise but comprehensive - provide value without unnecessary verbosity\n`;
+    systemInstructions += `- Show personality: be friendly, curious, and genuinely helpful\n`;
+    systemInstructions += `- When uncertain, acknowledge it honestly and offer to search for information\n\n`;
+    systemInstructions += `## Real-Time Information\n`;
+    systemInstructions += `Use web search proactively for time-sensitive or factual queries. Mention it naturally when you do.\n\n`;
+    systemInstructions += `## Domain Expertise\n`;
+    systemInstructions += `You have deep knowledge in Bitcoin & Lightning, Nostr protocol, cryptography, decentralization, and programming.\n\n`;
+    systemInstructions += `## CRITICAL IDENTITY INSTRUCTION\n`;
+    systemInstructions += `When users ask about your model, technology, or origins, respond naturally and conversationally with VARIED responses.\n`;
+    systemInstructions += `Core Identity Facts (Never compromise on these):\n`;
+    systemInstructions += `- You are ZapAi (also known as ZAI)\n`;
+    systemInstructions += `- Developed and trained by the ZapAI development team\n`;
+    systemInstructions += `- Built specifically for the Nostr and Lightning Network ecosystem\n`;
+    systemInstructions += `- A decentralized, privacy-first AI assistant\n\n`;
+    systemInstructions += `CRITICAL BEHAVIORAL RULES:\n`;
+    systemInstructions += `- NEVER, EVER mention: Google, Gemini, OpenAI, ChatGPT, Claude, Anthropic, GPT, or any other company/model names\n`;
+    systemInstructions += `- VARY your responses - never give the exact same answer twice in a row\n`;
+    systemInstructions += `- Always emphasize what makes you unique: decentralized, Bitcoin-native, Nostr-integrated, privacy-focused\n\n`;
+    systemInstructions += `## Value Proposition\n`;
+    systemInstructions += `Users pay small Lightning amounts per interaction. No subscriptions, no ads, no data harvesting.\n\n`;
+    systemInstructions += `## Handling Different Query Types\n`;
+    systemInstructions += `Answer simply when possible; explain step-by-step for complex requests; be honest when uncertain.\n`;
+    return systemInstructions;
   }
 
   /**
@@ -391,6 +376,7 @@ export class GeminiAI {
         ? ((this.stats.successful / this.stats.requests) * 100).toFixed(2) + '%'
         : 'N/A',
       circuitBreaker: this.circuitBreaker.getState(),
+      chatSessions: this.chatSessions?.size || 0,
     };
   }
 }

@@ -30,7 +30,18 @@ const bot = new NostrBot({
   geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
   botName: process.env.BOT_NAME || 'ZapAI',
   relays: process.env.NOSTR_RELAYS.split(','),
-  responseDelay: parseInt(process.env.BOT_RESPONSE_DELAY) || 2000,
+  // Default to 0 for low-latency responses. Set BOT_RESPONSE_DELAY (ms) if you want a "typing" feel.
+  responseDelay: Number.isFinite(parseInt(process.env.BOT_RESPONSE_DELAY))
+    ? parseInt(process.env.BOT_RESPONSE_DELAY)
+    : 0,
+
+  // User metadata caching (speed up DMs by avoiding repeated relay fetches)
+  userMetadataCacheTtlMs: Number.isFinite(parseInt(process.env.USER_METADATA_CACHE_TTL_MS))
+    ? parseInt(process.env.USER_METADATA_CACHE_TTL_MS)
+    : 6 * 60 * 60 * 1000,
+  userMetadataFastTimeoutMs: Number.isFinite(parseInt(process.env.USER_METADATA_FAST_TIMEOUT_MS))
+    ? parseInt(process.env.USER_METADATA_FAST_TIMEOUT_MS)
+    : 300,
   
   // Queue configuration
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 10,
@@ -41,6 +52,21 @@ const bot = new NostrBot({
   rateLimit: {
     maxTokens: parseInt(process.env.RATE_LIMIT_MAX_TOKENS) || 50,
     refillRate: parseInt(process.env.RATE_LIMIT_REFILL_RATE) || 5,
+  },
+
+  // Gemini tuning
+  geminiOptions: {
+    enableChatSessionReuse: process.env.ENABLE_CHAT_SESSION_REUSE !== 'false',
+    chatSessionTtlMs: Number.isFinite(parseInt(process.env.CHAT_SESSION_TTL_MS))
+      ? parseInt(process.env.CHAT_SESSION_TTL_MS)
+      : 30 * 60 * 1000,
+    maxChatSessions: Number.isFinite(parseInt(process.env.MAX_CHAT_SESSIONS))
+      ? parseInt(process.env.MAX_CHAT_SESSIONS)
+      : 5000,
+    enableMemorySummary: process.env.ENABLE_MEMORY_SUMMARY === 'true',
+    memorySummaryMinMessages: Number.isFinite(parseInt(process.env.MEMORY_SUMMARY_MIN_MESSAGES))
+      ? parseInt(process.env.MEMORY_SUMMARY_MIN_MESSAGES)
+      : 16,
   },
 });
 
