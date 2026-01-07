@@ -72,9 +72,6 @@ RATE_LIMIT_REFILL_RATE=5   # 5 tokens refilled per second
 USER_METADATA_CACHE_TTL_MS=21600000
 USER_METADATA_FAST_TIMEOUT_MS=300
 
-# Optional - Relay publish timeout (prevents hangs on slow relays)
-RELAY_PUBLISH_TIMEOUT_MS=8000
-
 # Optional - Gemini performance
 # Reuse in-memory chat sessions per DM session to avoid resending long history.
 ENABLE_CHAT_SESSION_REUSE=true
